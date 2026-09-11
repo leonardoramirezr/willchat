@@ -194,6 +194,7 @@ final class ChatStore {
 
     private func runTurn(conversationID: UUID) async {
         guard var message = live?.message else { return }
+        let log = RawLog()
 
         do {
             let client = try settings.makeClient()
@@ -204,7 +205,7 @@ final class ChatStore {
                 let body = try requestBody(for: conversationID, inProgress: message, useTools: useTools)
                 var calls = ToolCallAccumulator()
 
-                for try await event in client.streamChat(body: body) {
+                for try await event in client.streamChat(body: body, log: log) {
                     switch event {
                     case .content(let delta):
                         message.content += delta
@@ -228,7 +229,8 @@ final class ChatStore {
                 let round = message.toolRounds.count - 1
                 for index in message.toolRounds[round].calls.indices {
                     let call = message.toolRounds[round].calls[index]
-                    let result = await executeTool(call, client: client, conversationID: conversationID, current: message)
+                    let result = await executeTool(
+                        call, client: client, conversationID: conversationID, current: message, log: log)
                     message.toolRounds[round].calls[index].output = result.output
                     if let image = result.image {
                         message.images.append(image)
@@ -242,6 +244,8 @@ final class ChatStore {
                 message.errorText = error.localizedDescription
             }
         }
+
+        message.rawExchanges = log.exchanges
 
         // Every tool call needs a result, or the next request will be rejected.
         for round in message.toolRounds.indices {
@@ -427,7 +431,7 @@ final class ChatStore {
     // MARK: Tools
 
     private func executeTool(
-        _ call: ToolCallRecord, client: OpenAIClient, conversationID: UUID, current: ChatMessage
+        _ call: ToolCallRecord, client: OpenAIClient, conversationID: UUID, current: ChatMessage, log: RawLog
     ) async -> (output: String, image: StoredImage?) {
         guard call.name == "generate_image" else {
             return ("Error: unknown tool '\(call.name)'.", nil)
@@ -454,14 +458,14 @@ final class ChatStore {
                 // Not every provider supports edits; fall back to a fresh generation.
                 data = try? await client.editImage(
                     model: model, prompt: prompt, image: original, filename: previous.filename,
-                    mimeType: ImageStore.mimeType(for: previous), size: size)
+                    mimeType: ImageStore.mimeType(for: previous), size: size, log: log)
             }
             try Task.checkCancellation()
             let imageData: Data
             if let data {
                 imageData = data
             } else {
-                imageData = try await client.generateImage(model: model, prompt: prompt, size: size)
+                imageData = try await client.generateImage(model: model, prompt: prompt, size: size, log: log)
             }
             let stored = try ImageStore.save(imageData, prompt: prompt)
             return ("The image was generated successfully and is already displayed to the user. Prompt used: \"\(prompt)\".", stored)

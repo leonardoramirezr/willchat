@@ -57,13 +57,26 @@ struct OpenAIClient: Sendable {
         return request
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            throw APIError.http(status: status, message: Self.errorMessage(from: data, status: status))
+    private func perform(_ request: URLRequest, log: RawLog? = nil) async throws -> Data {
+        var record = RawExchange(request: request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = response as? HTTPURLResponse
+            record.apply(http)
+            record.setResponseBody(data)
+            log?.record(record)
+            let status = http?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                throw APIError.http(status: status, message: Self.errorMessage(from: data, status: status))
+            }
+            return data
+        } catch {
+            if record.status == 0 {
+                record.failure = error.localizedDescription
+                log?.record(record)
+            }
+            throw error
         }
-        return data
     }
 
     static func errorMessage(from data: Data, status: Int) -> String {
@@ -97,17 +110,29 @@ struct OpenAIClient: Sendable {
 
     // MARK: Chat
 
-    func streamChat(body: Data) -> AsyncThrowingStream<StreamEvent, Error> {
+    func streamChat(body: Data, log: RawLog? = nil) -> AsyncThrowingStream<StreamEvent, Error> {
         let request = makeRequest("chat/completions", method: "POST", body: body, timeout: 600)
         return AsyncThrowingStream { continuation in
             let task = Task {
+                var record = RawExchange(request: request)
+                var recorded = false
+                // The stream is kept verbatim, line by line, for the raw view.
+                var transcript = ""
+                func commit() {
+                    guard !recorded else { return }
+                    recorded = true
+                    log?.record(record)
+                }
                 do {
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     let http = response as? HTTPURLResponse
+                    record.apply(http)
                     let status = http?.statusCode ?? 0
                     guard (200..<300).contains(status) else {
                         var data = Data()
                         for try await byte in bytes { data.append(byte) }
+                        record.setResponseBody(data)
+                        commit()
                         throw APIError.http(status: status, message: Self.errorMessage(from: data, status: status))
                     }
 
@@ -116,6 +141,8 @@ struct OpenAIClient: Sendable {
                     if contentType.contains("application/json") {
                         var data = Data()
                         for try await byte in bytes { data.append(byte) }
+                        record.setResponseBody(data)
+                        commit()
                         let chunk = try JSONDecoder().decode(ChatChunk.self, from: data)
                         try Self.emit(chunk, to: continuation)
                         continuation.finish()
@@ -123,6 +150,9 @@ struct OpenAIClient: Sendable {
                     }
 
                     for try await line in bytes.lines {
+                        if transcript.utf8.count < RawFormat.limit {
+                            transcript += line + "\n"
+                        }
                         guard line.hasPrefix("data:") else { continue }
                         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                         if payload == "[DONE]" { break }
@@ -131,8 +161,14 @@ struct OpenAIClient: Sendable {
                         else { continue }
                         try Self.emit(chunk, to: continuation)
                     }
+                    record.setResponseBody(transcript)
+                    commit()
                     continuation.finish()
                 } catch {
+                    // Keep whatever arrived before the stream broke.
+                    record.setResponseBody(transcript)
+                    record.failure = error.localizedDescription
+                    commit()
                     continuation.finish(throwing: error)
                 }
             }
@@ -172,17 +208,20 @@ struct OpenAIClient: Sendable {
         !model.lowercased().hasPrefix("gpt-image")
     }
 
-    func generateImage(model: String, prompt: String, size: String?) async throws -> Data {
+    func generateImage(model: String, prompt: String, size: String?, log: RawLog? = nil) async throws -> Data {
         var body: [String: Any] = ["model": model, "prompt": prompt, "n": 1]
         if let size { body["size"] = size }
         if Self.sendsResponseFormat(model) { body["response_format"] = "b64_json" }
         let request = makeRequest(
             "images/generations", method: "POST",
             body: try JSONSerialization.data(withJSONObject: body), timeout: 300)
-        return try await Self.imageData(from: try await perform(request))
+        return try await Self.imageData(from: try await perform(request, log: log))
     }
 
-    func editImage(model: String, prompt: String, image: Data, filename: String, mimeType: String, size: String?) async throws -> Data {
+    func editImage(
+        model: String, prompt: String, image: Data, filename: String, mimeType: String,
+        size: String?, log: RawLog? = nil
+    ) async throws -> Data {
         let boundary = "WillChat-\(UUID().uuidString)"
         var body = Data()
         func field(_ name: String, _ value: String) {
@@ -200,7 +239,7 @@ struct OpenAIClient: Sendable {
         let request = makeRequest(
             "images/edits", method: "POST", body: body,
             contentType: "multipart/form-data; boundary=\(boundary)", timeout: 300)
-        return try await Self.imageData(from: try await perform(request))
+        return try await Self.imageData(from: try await perform(request, log: log))
     }
 
     private static func imageData(from data: Data) async throws -> Data {

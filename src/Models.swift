@@ -48,6 +48,8 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     var images: [StoredImage] = []
     /// Documents the user attached.
     var files: [StoredFile] = []
+    /// The HTTP round trips behind this reply, for the raw view.
+    var rawExchanges: [RawExchange] = []
     var errorText: String?
     var createdAt: Date = Date()
 
@@ -70,7 +72,7 @@ struct ChatMessage: Identifiable, Codable, Hashable {
 
 extension ChatMessage {
     private enum CodingKeys: String, CodingKey {
-        case id, role, content, toolRounds, images, files, errorText, createdAt
+        case id, role, content, toolRounds, images, files, rawExchanges, errorText, createdAt
     }
 
     /// Tolerates fields added after a conversation was saved.
@@ -82,6 +84,7 @@ extension ChatMessage {
         toolRounds = try container.decodeIfPresent([ToolRound].self, forKey: .toolRounds) ?? []
         images = try container.decodeIfPresent([StoredImage].self, forKey: .images) ?? []
         files = try container.decodeIfPresent([StoredFile].self, forKey: .files) ?? []
+        rawExchanges = try container.decodeIfPresent([RawExchange].self, forKey: .rawExchanges) ?? []
         errorText = try container.decodeIfPresent(String.self, forKey: .errorText)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }

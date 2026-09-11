@@ -118,9 +118,16 @@ struct MessageRow: View {
                 ErrorBanner(text: errorText, onRetry: onRetry)
             }
 
-            if !isLive && !message.fullText.isEmpty {
-                CopyButton(text: message.fullText)
-                    .opacity(isHovering ? 1 : 0)
+            if !isLive && (!message.fullText.isEmpty || !message.rawExchanges.isEmpty) {
+                HStack(spacing: 0) {
+                    if !message.fullText.isEmpty {
+                        CopyButton(text: message.fullText)
+                    }
+                    if !message.rawExchanges.isEmpty {
+                        RawButton(exchanges: message.rawExchanges)
+                    }
+                }
+                .opacity(isHovering ? 1 : 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
