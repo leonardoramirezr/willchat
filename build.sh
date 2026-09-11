@@ -12,10 +12,15 @@ mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 echo "Compiling..."
 xcrun swiftc \
     -parse-as-library \
+    -swift-version 5 \
+    -O \
+    -target arm64-apple-macosx15.0 \
     -o "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" \
     src/*.swift \
+    -framework SwiftUI \
     -framework AppKit \
     -framework Foundation \
+    -framework Security \
     -framework CoreText
 
 cp Info.plist "${APP_BUNDLE}/Contents/Info.plist"

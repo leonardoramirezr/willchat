@@ -7,7 +7,7 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.tuusuario.willchat</string>
+    <string>com.leonardoramirezr.willchat</string>
     <key>CFBundleName</key>
     <string>WillChat</string>
     <key>CFBundlePackageType</key>
@@ -16,5 +16,13 @@
     <string>1.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <!-- Allow plain-HTTP servers such as Ollama or LM Studio on localhost/LAN. -->
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>
