@@ -134,7 +134,7 @@ struct ChatView: View {
         }
         // Text wins over images: apps like Word also put a picture of copied text on the pasteboard.
         if pasteboard.string(forType: .string) != nil { return false }
-        guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return false }
+        guard let data = pasteboard.imageData else { return false }
         addAttachments([{ try DraftAttachment.image(data, name: "Imagen pegada") }])
         return true
     }

@@ -260,6 +260,13 @@ final class ComposerNSTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// A plain-text view only enables Paste for text and files, so ⌘V would never
+    /// reach `paste(_:)` with just an image (e.g. a screenshot) on the pasteboard.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, NSPasteboard.general.hasImage { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard !didRequestInitialFocus, let window else { return }

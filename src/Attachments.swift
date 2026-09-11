@@ -67,6 +67,18 @@ struct DraftAttachment: Identifiable {
     }
 }
 
+extension NSPasteboard {
+    /// The first image type on the pasteboard, in the order the source app offered them
+    /// (PNG for screenshots, TIFF from most apps, JPEG or HEIC from some).
+    private var imageType: PasteboardType? {
+        types?.first { UTType($0.rawValue)?.conforms(to: .image) == true }
+    }
+
+    var hasImage: Bool { imageType != nil }
+
+    var imageData: Data? { imageType.flatMap { data(forType: $0) } }
+}
+
 /// Documents attached by the user, stored in `Persistence.filesDirectory`.
 @MainActor
 enum FileStore {
