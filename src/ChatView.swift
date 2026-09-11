@@ -1,10 +1,15 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChatView: View {
     @Environment(ChatStore.self) private var store
     @Environment(UIState.self) private var ui
 
     @State private var draft = ""
+    @State private var attachments: [DraftAttachment] = []
+    @State private var attachmentError: String?
+    @State private var isDropTargeted = false
 
     var body: some View {
         let conversation = store.selectedConversation
@@ -30,10 +35,14 @@ struct ChatView: View {
 
             ComposerView(
                 text: $draft,
+                attachments: attachments,
                 isStreaming: store.isStreaming,
                 focusToken: ui.composerFocusToken,
                 onSend: submit,
-                onStop: store.stop
+                onStop: store.stop,
+                onAttach: pickFiles,
+                onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
+                onPaste: paste
             )
             .frame(maxWidth: 760)
             .padding(.horizontal, 24)
@@ -51,12 +60,122 @@ struct ChatView: View {
             }
         }
         .animation(.smooth(duration: 0.35), value: isEmpty)
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted, perform: drop)
+        .overlay {
+            if isDropTargeted {
+                DropOverlay()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: isDropTargeted)
+        .onChange(of: ui.attachFilesToken) { pickFiles() }
+        .alert(
+            "No se pudo adjuntar",
+            isPresented: Binding(get: { attachmentError != nil }, set: { if !$0 { attachmentError = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(attachmentError ?? "")
+        }
     }
 
     private func submit() {
-        if store.send(draft) {
-            draft = ""
+        do {
+            if try store.send(draft, attachments: attachments) {
+                draft = ""
+                attachments = []
+            }
+        } catch {
+            attachmentError = "No se pudieron guardar los adjuntos. \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Attachments
+
+    private func pickFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.prompt = "Adjuntar"
+        panel.message = "Elige imágenes o documentos para adjuntar al mensaje"
+        guard panel.runModal() == .OK else { return }
+        addFiles(panel.urls)
+    }
+
+    private func addFiles(_ urls: [URL]) {
+        addAttachments(urls.map { url in { try DraftAttachment.load(from: url) } })
+    }
+
+    private func addAttachments(_ loaders: [() throws -> DraftAttachment]) {
+        var errors: [String] = []
+        for load in loaders {
+            guard attachments.count < DraftAttachment.maxCount else {
+                errors.append("Puedes adjuntar hasta \(DraftAttachment.maxCount) archivos por mensaje.")
+                break
+            }
+            do {
+                attachments.append(try load())
+            } catch {
+                errors.append(error.localizedDescription)
+            }
+        }
+        if !errors.isEmpty {
+            attachmentError = ([attachmentError].compactMap { $0 } + errors).joined(separator: "\n")
+        }
+        ui.focusComposer()
+    }
+
+    /// Attaches copied files or images; returns `false` to let the text view paste text.
+    private func paste(from pasteboard: NSPasteboard) -> Bool {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        if !urls.isEmpty {
+            addFiles(urls)
+            return true
+        }
+        // Text wins over images: apps like Word also put a picture of copied text on the pasteboard.
+        if pasteboard.string(forType: .string) != nil { return false }
+        guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return false }
+        addAttachments([{ try DraftAttachment.image(data, name: "Imagen pegada") }])
+        return true
+    }
+
+    private func drop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in addFiles([url]) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                // Images dragged from apps that don't provide a file, such as a browser.
+                accepted = true
+                let name = provider.suggestedName ?? "Imagen"
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in addAttachments([{ try DraftAttachment.image(data, name: name) }]) }
+                }
+            }
+        }
+        return accepted
+    }
+}
+
+private struct DropOverlay: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(Color.accentColor.opacity(0.06))
+            .strokeBorder(Color.accentColor.opacity(0.8), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+            .overlay {
+                Label("Suelta los archivos para adjuntarlos", systemImage: "paperclip")
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+            }
+            .padding(12)
+            .allowsHitTesting(false)
     }
 }
 

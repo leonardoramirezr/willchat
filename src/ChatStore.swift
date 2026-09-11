@@ -62,6 +62,7 @@ final class ChatStore {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         if live?.conversationID == id { stop() }
         ImageStore.delete(conversations[index].messages.flatMap(\.images))
+        FileStore.delete(conversations[index].messages.flatMap(\.files))
         conversations.remove(at: index)
         Persistence.delete(id)
         if selectedID == id { selectedID = nil }
@@ -121,21 +122,37 @@ final class ChatStore {
     // MARK: Sending
 
     /// Returns `true` when the message was accepted (so the composer can be cleared).
+    /// Throws if an attachment can't be saved; nothing is sent in that case.
     @discardableResult
-    func send(_ rawText: String) -> Bool {
+    func send(_ rawText: String, attachments: [DraftAttachment] = []) throws -> Bool {
         let text = rawText.trimmed
-        guard !text.isEmpty, !isStreaming else { return false }
+        guard !text.isEmpty || !attachments.isEmpty, !isStreaming else { return false }
+
+        var message = ChatMessage(role: .user, content: text)
+        do {
+            for attachment in attachments {
+                switch attachment.kind {
+                case .image: message.images.append(try ImageStore.save(attachment.data, prompt: nil))
+                case .document: message.files.append(try FileStore.save(attachment.data, name: attachment.name))
+                }
+            }
+        } catch {
+            ImageStore.delete(message.images)
+            FileStore.delete(message.files)
+            throw error
+        }
 
         let conversationID: UUID
         if let selectedID, conversation(selectedID) != nil {
             conversationID = selectedID
         } else {
-            let conversation = Conversation(title: Self.provisionalTitle(from: text))
+            let seed = text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text
+            let conversation = Conversation(title: Self.provisionalTitle(from: seed))
             conversations.insert(conversation, at: 0)
             conversationID = conversation.id
             selectedID = conversation.id
         }
-        mutate(conversationID) { $0.messages.append(ChatMessage(role: .user, content: text)) }
+        mutate(conversationID) { $0.messages.append(message) }
         startTurn(in: conversationID)
         return true
     }
@@ -248,21 +265,29 @@ final class ChatStore {
         for message in conversation.messages + [inProgress] {
             switch message.role {
             case .user:
+                var parts: [[String: Any]] = []
                 // Chat completions don't allow images in assistant messages, so images the
                 // assistant produced travel with the next user message as vision input.
-                let imageURLs = settings.sendImagesAsContext
+                let generatedURLs = settings.sendImagesAsContext
                     ? pendingImages.compactMap { ImageStore.contextDataURL(for: $0) }
                     : []
                 pendingImages.removeAll()
-                if imageURLs.isEmpty {
-                    messages.append(["role": "user", "content": message.content])
-                } else {
-                    var parts: [[String: Any]] = [[
+                if !generatedURLs.isEmpty {
+                    parts.append([
                         "type": "text",
                         "text": "[Images you (the assistant) generated earlier in this conversation, attached for context]",
-                    ]]
-                    parts += imageURLs.map { ["type": "image_url", "image_url": ["url": $0]] }
-                    parts.append(["type": "text", "text": message.content])
+                    ])
+                    parts += generatedURLs.map { ["type": "image_url", "image_url": ["url": $0]] }
+                }
+                parts += message.images
+                    .compactMap { ImageStore.contextDataURL(for: $0, maxPixelSize: 2048) }
+                    .map { ["type": "image_url", "image_url": ["url": $0]] }
+
+                let text = userText(for: message)
+                if parts.isEmpty {
+                    messages.append(["role": "user", "content": text])
+                } else {
+                    if !text.isEmpty { parts.append(["type": "text", "text": text]) }
                     messages.append(["role": "user", "content": parts])
                 }
             case .assistant:
@@ -274,6 +299,15 @@ final class ChatStore {
         var body: [String: Any] = ["model": model, "messages": messages, "stream": true]
         if useTools { body["tools"] = [Self.imageTool] }
         return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    /// The user's text preceded by the contents of their attached documents.
+    private func userText(for message: ChatMessage) -> String {
+        let documents = message.files.map { file in
+            let body = FileStore.text(for: file) ?? "[The file is no longer available]"
+            return "<file name=\"\(file.name)\">\n\(body)\n</file>"
+        }
+        return (documents + [message.content]).filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     private func apiMessages(forAssistant message: ChatMessage, useTools: Bool) -> [[String: Any]] {
@@ -310,15 +344,17 @@ final class ChatStore {
         let date = Date().formatted(date: .complete, time: .omitted)
         var prompt = """
         You are WillChat, a helpful assistant in a macOS chat app. Reply in the same language the user writes in. \
-        Use Markdown when it improves readability. Current date: \(date).
+        Use Markdown when it improves readability. Current date: \(date). The user can attach images and files; \
+        the contents of attached files appear in their message inside <file name="…"> tags.
         """
         if useTools {
             prompt += """
 
 
             You can create images with the `generate_image` tool. Call it whenever the user asks you to create, draw, \
-            design, illustrate or modify an image, writing a detailed prompt. To change an image you already generated, \
-            set `edit_previous_image` to true and describe the full desired result. Generated images are shown to the \
+            design, illustrate or modify an image, writing a detailed prompt. To change the most recent image in the \
+            conversation (one you generated or one the user attached), set `edit_previous_image` to true and describe \
+            the full desired result. Generated images are shown to the \
             user automatically: never include links or Markdown images for them, just add a brief comment.
             """
         }
@@ -334,7 +370,7 @@ final class ChatStore {
             "type": "function",
             "function": [
                 "name": "generate_image",
-                "description": "Generates an image from a text description and shows it to the user. Use it when the user asks for an image, drawing, illustration, logo, photo, etc., or wants to modify a previously generated image.",
+                "description": "Generates an image from a text description and shows it to the user. Use it when the user asks for an image, drawing, illustration, logo, photo, etc., or wants to modify a previous image (generated or attached by the user).",
                 "parameters": [
                     "type": "object",
                     "properties": [
@@ -349,7 +385,7 @@ final class ChatStore {
                         ],
                         "edit_previous_image": [
                             "type": "boolean",
-                            "description": "true to modify the most recent image in this conversation instead of creating a new one from scratch.",
+                            "description": "true to modify the most recent image in this conversation (generated or attached by the user) instead of creating a new one from scratch.",
                         ],
                     ],
                     "required": ["prompt"],
@@ -439,7 +475,7 @@ final class ChatStore {
 
         let messages: [[String: Any]] = [
             ["role": "system", "content": "You write short titles for chat conversations. Reply with only the title: 2 to 6 words, in the same language as the user, no quotes, no final punctuation."],
-            ["role": "user", "content": "User: \(question.content.prefix(1500))\n\nAssistant: \(answer.fullText.prefix(1500))"],
+            ["role": "user", "content": "User: \(Self.titleSource(for: question).prefix(1500))\n\nAssistant: \(answer.fullText.prefix(1500))"],
         ]
         let payload: [String: Any] = ["model": settings.chatModel, "messages": messages, "stream": false]
         guard let body = try? JSONSerialization.data(withJSONObject: payload),
@@ -452,6 +488,12 @@ final class ChatStore {
         title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”«»*#.").union(.whitespaces))
         guard !title.isEmpty else { return }
         mutate(id, touch: false) { $0.title = String(title.prefix(60)) }
+    }
+
+    private static func titleSource(for message: ChatMessage) -> String {
+        var names = message.files.map { "[Attached file: \($0.name)]" }
+        if !message.images.isEmpty { names.append("[\(message.images.count) attached image(s)]") }
+        return (names + [message.content]).filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }
 

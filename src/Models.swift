@@ -11,6 +11,16 @@ struct StoredImage: Identifiable, Codable, Hashable {
     var prompt: String?
 }
 
+/// A document the user attached to a message; its text is sent to the model.
+struct StoredFile: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    /// Name of the copy inside `Persistence.filesDirectory`.
+    var filename: String
+    /// Original file name, shown to the user and the model.
+    var name: String
+    var byteCount: Int
+}
+
 /// A tool call made by the model plus the result we sent back.
 struct ToolCallRecord: Identifiable, Codable, Hashable {
     var id: String
@@ -32,7 +42,10 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     /// User text, or the assistant's final answer (after any tool rounds).
     var content: String
     var toolRounds: [ToolRound] = []
+    /// Images the assistant produced, or images the user attached.
     var images: [StoredImage] = []
+    /// Documents the user attached.
+    var files: [StoredFile] = []
     var errorText: String?
     var createdAt: Date = Date()
 
@@ -50,6 +63,25 @@ struct ChatMessage: Identifiable, Codable, Hashable {
 
     func image(withID id: UUID) -> StoredImage? {
         images.first { $0.id == id }
+    }
+}
+
+extension ChatMessage {
+    private enum CodingKeys: String, CodingKey {
+        case id, role, content, toolRounds, images, files, errorText, createdAt
+    }
+
+    /// Tolerates fields added after a conversation was saved.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(ChatRole.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        toolRounds = try container.decodeIfPresent([ToolRound].self, forKey: .toolRounds) ?? []
+        images = try container.decodeIfPresent([StoredImage].self, forKey: .images) ?? []
+        files = try container.decodeIfPresent([StoredFile].self, forKey: .files) ?? []
+        errorText = try container.decodeIfPresent(String.self, forKey: .errorText)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -104,11 +136,13 @@ enum Persistence {
     }()
     static let conversationsDirectory = root.appending(path: "Conversations", directoryHint: .isDirectory)
     static let imagesDirectory = root.appending(path: "Images", directoryHint: .isDirectory)
+    static let filesDirectory = root.appending(path: "Files", directoryHint: .isDirectory)
 
     static func ensureDirectories() {
         let fm = FileManager.default
         try? fm.createDirectory(at: conversationsDirectory, withIntermediateDirectories: true)
         try? fm.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
     }
 
     private static func fileURL(for id: UUID) -> URL {

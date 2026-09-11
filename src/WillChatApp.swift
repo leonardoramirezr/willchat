@@ -47,6 +47,10 @@ struct WillChatApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 Divider()
+                Button("Adjuntar archivos…") { ui.requestAttachFiles() }
+                    .keyboardShortcut("u")
+                    .disabled(!settings.hasCompletedOnboarding)
+                Divider()
                 Button("Detener respuesta") { store.stop() }
                     .keyboardShortcut(".")
                     .disabled(!store.isStreaming)
@@ -71,9 +75,14 @@ final class UIState {
         didSet { UserDefaults.standard.set(historyVisible, forKey: "historyVisible") }
     }
     private(set) var composerFocusToken = 0
+    private(set) var attachFilesToken = 0
 
     func focusComposer() {
         composerFocusToken += 1
+    }
+
+    func requestAttachFiles() {
+        attachFilesToken += 1
     }
 }
 

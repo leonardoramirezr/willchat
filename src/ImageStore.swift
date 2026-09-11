@@ -45,13 +45,9 @@ enum ImageStore {
     /// A downscaled JPEG `data:` URL used to send the image back to the model as context.
     static func contextDataURL(for image: StoredImage, maxPixelSize: Int = 1024) -> String? {
         if let cached = contextCache[image.id] { return cached }
-        guard let source = CGImageSourceCreateWithURL(fileURL(for: image) as CFURL, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-        ]
-        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        guard let source = CGImageSourceCreateWithURL(fileURL(for: image) as CFURL, nil),
+              let thumbnail = downscaled(source, maxPixelSize: maxPixelSize)
+        else { return nil }
 
         // Flatten onto white so transparent PNGs don't turn black as JPEG.
         let rect = CGRect(x: 0, y: 0, width: thumbnail.width, height: thumbnail.height)
@@ -72,12 +68,49 @@ enum ImageStore {
         return url
     }
 
+    /// Returns user-provided image data in a format the image APIs accept: PNG, JPEG and WebP
+    /// are kept as is; anything else ImageIO can read (HEIC, TIFF, GIF…) is re-encoded.
+    static func normalizedData(_ data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0
+        else { return nil }
+        if knownExtension(for: data) != nil { return data }
+        guard let image = downscaled(source, maxPixelSize: 4096) else { return nil }
+        let rep = NSBitmapImageRep(cgImage: image)
+        let isOpaque = [.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo)
+        return isOpaque
+            ? rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+            : rep.representation(using: .png, properties: [:])
+    }
+
+    static func thumbnail(of data: Data, maxPixelSize: Int) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = downscaled(source, maxPixelSize: maxPixelSize)
+        else { return nil }
+        return NSImage(cgImage: image, size: .zero)
+    }
+
+    /// Decodes the first frame, applying its EXIF orientation and capping its longest side.
+    private static func downscaled(_ source: CGImageSource, maxPixelSize: Int) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
     private static func fileExtension(for data: Data) -> String {
+        knownExtension(for: data) ?? "png"
+    }
+
+    private static func knownExtension(for data: Data) -> String? {
         let bytes = [UInt8](data.prefix(12))
         if bytes.starts(with: [0xFF, 0xD8]) { return "jpg" }
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }
         if bytes.count >= 12, bytes[0...3] == [0x52, 0x49, 0x46, 0x46], bytes[8...11] == [0x57, 0x45, 0x42, 0x50] {
             return "webp"
         }
-        return "png"
+        return nil
     }
 }

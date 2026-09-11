@@ -17,6 +17,7 @@ make install   # copia la app a /Applications
 - Barra lateral con nuevo chat (⌘N), búsqueda (⌘K), historial (⌃⌘S) y configuración (⌘,).
 - Respuestas en streaming con Markdown (código, listas, tablas).
 - Generación de imágenes: el modelo decide cuándo llamar a la herramienta `generate_image`, que usa `/images/generations` (o `/images/edits` para modificar la imagen anterior). Las imágenes generadas se reenvían al modelo como contexto (visión) en los siguientes mensajes.
-- Los chats y las imágenes se guardan en `~/Library/Application Support/WillChat`; la API key se guarda en el Llavero.
+- Archivos adjuntos: botón «+» (⌘U), arrastrar y soltar, o pegar (⌘V). Las imágenes se envían como visión; de PDF, Word/RTF/ODT y archivos de texto o código se extrae el texto y se incluye en el mensaje. Las imágenes adjuntas también se pueden modificar con `generate_image`.
+- Los chats, las imágenes y los adjuntos se guardan en `~/Library/Application Support/WillChat`; la API key se guarda en el Llavero.
 
 Si tu proveedor no soporta *tool calling* o visión, desactiva esas opciones en Configuración.

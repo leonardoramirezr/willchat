@@ -3,17 +3,66 @@ import SwiftUI
 
 struct ComposerView: View {
     @Binding var text: String
+    let attachments: [DraftAttachment]
     let isStreaming: Bool
     let focusToken: Int
     let onSend: () -> Void
     let onStop: () -> Void
+    let onAttach: () -> Void
+    let onRemoveAttachment: (DraftAttachment.ID) -> Void
+    /// Returns `true` when the pasteboard held files or images that were attached.
+    let onPaste: (NSPasteboard) -> Bool
 
     @State private var textHeight: CGFloat = ComposerTextView.lineHeight
 
-    private var canSend: Bool { !text.trimmed.isEmpty && !isStreaming }
+    private var canSend: Bool { (!text.trimmed.isEmpty || !attachments.isEmpty) && !isStreaming }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(attachments) { attachment in
+                            DraftAttachmentView(attachment: attachment) {
+                                onRemoveAttachment(attachment.id)
+                            }
+                        }
+                    }
+                    // Room for the remove buttons, which stick out of each corner.
+                    .padding(.top, 6)
+                    .padding(.horizontal, 6)
+                }
+                .transition(.opacity)
+            }
+            inputRow
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(0.08), radius: 14, y: 4)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.1))
+        )
+        .animation(.easeOut(duration: 0.12), value: textHeight)
+        .animation(.easeOut(duration: 0.15), value: attachments.map(\.id))
+    }
+
+    private var inputRow: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Button(action: onAttach) {
+                Image(systemName: "plus")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Adjuntar archivos (⌘U)")
+
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text("Pregunta lo que quieras")
@@ -21,7 +70,9 @@ struct ComposerView: View {
                         .foregroundStyle(.tertiary)
                         .allowsHitTesting(false)
                 }
-                ComposerTextView(text: $text, height: $textHeight, focusToken: focusToken, onSubmit: onSend)
+                ComposerTextView(
+                    text: $text, height: $textHeight, focusToken: focusToken,
+                    onSubmit: onSend, onPaste: onPaste)
                     .frame(height: textHeight)
             }
             .padding(.vertical, 7)
@@ -40,19 +91,40 @@ struct ComposerView: View {
             .disabled(!canSend && !isStreaming)
             .help(isStreaming ? "Detener (⌘.)" : "Enviar (↩︎)")
         }
-        .padding(.leading, 20)
-        .padding(.trailing, 9)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(0.08), radius: 14, y: 4)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.1))
-        )
-        .animation(.easeOut(duration: 0.12), value: textHeight)
+    }
+}
+
+/// A pending attachment in the composer, with a button to remove it.
+private struct DraftAttachmentView: View {
+    let attachment: DraftAttachment
+    let onRemove: () -> Void
+
+    var body: some View {
+        Group {
+            if let preview = attachment.preview {
+                Image(nsImage: preview)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .help(attachment.name)
+            } else {
+                FileChip(name: attachment.name, byteCount: attachment.data.count)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .textBackgroundColor))
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(Color.primary.opacity(0.75)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Quitar")
+            .offset(x: 6, y: -6)
+        }
     }
 }
 
@@ -63,6 +135,7 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var height: CGFloat
     let focusToken: Int
     let onSubmit: () -> Void
+    let onPaste: (NSPasteboard) -> Bool
 
     static let fontSize: CGFloat = 15
     static let font = NSFont.systemFont(ofSize: fontSize)
@@ -96,6 +169,9 @@ struct ComposerTextView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.string = text
         textView.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.recalculateHeight() }
+        textView.onPaste = { [weak coordinator = context.coordinator] pasteboard in
+            coordinator?.parent.onPaste(pasteboard) ?? false
+        }
 
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -170,7 +246,19 @@ struct ComposerTextView: NSViewRepresentable {
 
 final class ComposerNSTextView: NSTextView {
     var onWidthChange: (() -> Void)?
+    var onPaste: ((NSPasteboard) -> Bool)?
     private var didRequestInitialFocus = false
+
+    /// Accept only dropped text, leaving files and images to the chat view (which
+    /// attaches them) instead of inserting their paths here.
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        [.string]
+    }
+
+    override func paste(_ sender: Any?) {
+        if onPaste?(NSPasteboard.general) == true { return }
+        super.paste(sender)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
