@@ -68,40 +68,36 @@ private struct ChatTopBar: View {
     @State private var refreshError: String?
 
     var body: some View {
+        @Bindable var settings = settings
+
         HStack(spacing: 8) {
-            Menu {
-                Section("Modelo de chat") {
-                    ForEach(settings.chatModelOptions, id: \.self) { model in
-                        Button {
-                            settings.chatModel = model
-                        } label: {
-                            if model == settings.chatModel {
-                                Label(model, systemImage: "checkmark")
-                            } else {
-                                Text(model)
-                            }
-                        }
-                    }
+            TopBarMenu {
+                modelSection("Modelo de chat", options: settings.chatModelOptions, selection: settings.chatModel) {
+                    settings.chatModel = $0
                 }
+                commonItems
+            } label: {
+                Text(settings.chatModel.isEmpty ? "Elegir modelo" : settings.chatModel)
+                    .font(.system(size: 15, weight: .semibold))
+            }
+
+            TopBarMenu {
+                Toggle("Generar imágenes", isOn: $settings.imageGenerationEnabled)
                 Divider()
-                Button("Actualizar lista de modelos") { refresh() }
-                Button("Configuración…") { ui.showSettings = true }
+                modelSection("Modelo de imágenes", options: settings.imageModelOptions, selection: settings.imageModel) {
+                    settings.imageModel = $0
+                    settings.imageGenerationEnabled = true
+                }
+                commonItems
             } label: {
                 HStack(spacing: 5) {
-                    Text(settings.chatModel.isEmpty ? "Elegir modelo" : settings.chatModel)
-                        .font(.system(size: 15, weight: .semibold))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "photo")
+                    Text(settings.imageModel.isEmpty ? "Modelo de imágenes" : settings.imageModel)
                 }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(settings.imageGenerationEnabled ? .secondary : .tertiary)
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.0001)))
+            .help(settings.imageGenerationEnabled ? "Modelo de imágenes" : "Generación de imágenes desactivada")
 
             if isRefreshing {
                 ProgressView().controlSize(.small)
@@ -117,6 +113,31 @@ private struct ChatTopBar: View {
         .padding(.top, 6)
     }
 
+    private func modelSection(
+        _ title: String, options: [String], selection: String, select: @escaping (String) -> Void
+    ) -> some View {
+        Section(title) {
+            ForEach(options, id: \.self) { model in
+                Button {
+                    select(model)
+                } label: {
+                    if model == selection {
+                        Label(model, systemImage: "checkmark")
+                    } else {
+                        Text(model)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var commonItems: some View {
+        Divider()
+        Button("Actualizar lista de modelos") { refresh() }
+        Button("Configuración…") { ui.showSettings = true }
+    }
+
     private func refresh() {
         isRefreshing = true
         refreshError = nil
@@ -128,6 +149,32 @@ private struct ChatTopBar: View {
             }
             isRefreshing = false
         }
+    }
+}
+
+/// A borderless top-bar menu: the label followed by a small chevron.
+private struct TopBarMenu<Content: View, Label: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        Menu {
+            content
+        } label: {
+            HStack(spacing: 5) {
+                label
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.0001)))
     }
 }
 

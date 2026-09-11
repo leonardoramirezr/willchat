@@ -84,6 +84,12 @@ final class AppSettings {
         return options
     }
 
+    var imageModelOptions: [String] {
+        var options = ModelFilter.image(availableModels)
+        if !imageModel.isEmpty && !options.contains(imageModel) { options.insert(imageModel, at: 0) }
+        return options
+    }
+
     func refreshModels() async throws {
         let models = try await makeClient().listModels()
         availableModels = models
