@@ -7,6 +7,7 @@ APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
 
 rm -rf "${BUILD_DIR}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
+mkdir -p "${APP_BUNDLE}/Contents/Resources"
 # mkdir -p "${APP_BUNDLE}/Contents/Resources/Fonts"
 
 echo "Compiling..."
@@ -25,7 +26,7 @@ xcrun swiftc \
 
 cp Info.plist "${APP_BUNDLE}/Contents/Info.plist"
 # cp Resources/Fonts/*.ttf "${APP_BUNDLE}/Contents/Resources/Fonts/"
-# cp Resources/Icon/AppIcon.icns "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+cp Resources/Icon/AppIcon.icns "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
 
 echo "Signing app..."
 codesign --force --deep --sign - "${APP_BUNDLE}"

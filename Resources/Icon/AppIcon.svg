@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">WillChat — Monograma</title>
+  <!-- Concepto 1: monograma W recortado en una burbuja de chat.
+       macOS icon grid: 1024 canvas, 824 body, continuous corners (r 185.4). -->
+  <defs>
+    <clipPath id="bodyClip"><path d="M 383.41 100 L 640.59 100 C 722.19 100 763 100 799.79 112.14 L 806.92 113.89 C 854.88 131.34 892.66 169.12 910.11 217.08 L 911.86 224.21 C 924 261 924 301.81 924 383.41 L 924 640.59 C 924 722.19 924 763 911.86 799.79 L 910.11 806.92 C 892.66 854.88 854.88 892.66 806.92 910.11 L 799.79 911.86 C 763 924 722.19 924 640.59 924 L 383.41 924 C 301.81 924 261 924 224.21 911.86 L 217.08 910.11 C 169.12 892.66 131.34 854.88 113.89 806.92 L 112.14 799.79 C 100 763 100 722.19 100 640.59 L 100 383.41 C 100 301.81 100 261 112.14 224.21 L 113.89 217.08 C 131.34 169.12 169.12 131.34 217.08 113.89 L 224.21 112.14 C 261 100 301.81 100 383.41 100 Z"/></clipPath>
+    <filter id="cast" x="-14%" y="-14%" width="128%" height="132%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="11"/>
+      <feOffset dy="12" result="s"/>
+      <feFlood flood-color="#1A0663" flood-opacity="0.34"/>
+      <feComposite in2="s" operator="in"/>
+    </filter>
+    <linearGradient id="rim" gradientUnits="userSpaceOnUse" x1="512" y1="100" x2="512" y2="600">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="512" y1="100" x2="512" y2="924">
+      <stop offset="0" stop-color="#907EFF"/>
+      <stop offset="0.5" stop-color="#6547F2"/>
+      <stop offset="1" stop-color="#4316C8"/>
+    </linearGradient>
+    <radialGradient id="glow" gradientUnits="userSpaceOnUse" cx="880" cy="900" r="580">
+      <stop offset="0" stop-color="#FF63C1" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#FF63C1" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sheen" gradientUnits="userSpaceOnUse" cx="230" cy="120" r="640">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paper" gradientUnits="userSpaceOnUse" x1="512" y1="262" x2="512" y2="786">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EDE9FF"/>
+    </linearGradient>
+    <mask id="cutW" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <path d="M 352 392 L 428 570 L 512 436 L 596 570 L 672 392" fill="none" stroke="#000000" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+    </mask>
+    <filter id="lift" x="-25%" y="-25%" width="150%" height="165%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="24"/>
+      <feOffset dy="26" result="a"/>
+      <feFlood flood-color="#26067F" flood-opacity="0.34"/>
+      <feComposite in2="a" operator="in" result="ambient"/>
+      <feGaussianBlur in="SourceAlpha" stdDeviation="5"/>
+      <feOffset dy="6" result="b"/>
+      <feFlood flood-color="#26067F" flood-opacity="0.24"/>
+      <feComposite in2="b" operator="in" result="contact"/>
+      <feMerge><feMergeNode in="ambient"/><feMergeNode in="contact"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <path d="M 383.41 100 L 640.59 100 C 722.19 100 763 100 799.79 112.14 L 806.92 113.89 C 854.88 131.34 892.66 169.12 910.11 217.08 L 911.86 224.21 C 924 261 924 301.81 924 383.41 L 924 640.59 C 924 722.19 924 763 911.86 799.79 L 910.11 806.92 C 892.66 854.88 854.88 892.66 806.92 910.11 L 799.79 911.86 C 763 924 722.19 924 640.59 924 L 383.41 924 C 301.81 924 261 924 224.21 911.86 L 217.08 910.11 C 169.12 892.66 131.34 854.88 113.89 806.92 L 112.14 799.79 C 100 763 100 722.19 100 640.59 L 100 383.41 C 100 301.81 100 261 112.14 224.21 L 113.89 217.08 C 131.34 169.12 169.12 131.34 217.08 113.89 L 224.21 112.14 C 261 100 301.81 100 383.41 100 Z" filter="url(#cast)"/>
+
+  <g clip-path="url(#bodyClip)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <rect width="1024" height="1024" fill="url(#sheen)"/>
+
+    <!-- speech bubble with the W knocked out -->
+    <g filter="url(#lift)">
+      <g mask="url(#cutW)">
+        <path d="M 423.78 262 L 600.22 262 C 658.32 262 687.37 262 713.57 270.65 L 718.64 271.89 C 752.79 284.32 779.68 311.21 792.11 345.36 L 793.35 350.43 C 802 376.63 802 405.68 802 463.78 L 802 480.22 C 802 538.32 802 567.37 793.35 593.57 L 792.11 598.64 C 779.68 632.79 752.79 659.68 718.64 672.11 L 713.57 673.35 C 687.37 682 658.32 682 600.22 682 L 367.2 682 C 299 682 255 743.6 202.2 774.4 C 192.3 730.4 222 624.8 222 574.2 L 222 463.78 C 222 405.68 222 376.63 230.65 350.43 L 231.89 345.36 C 244.32 311.21 271.21 284.32 305.36 271.89 L 310.43 270.65 C 336.63 262 365.68 262 423.78 262 Z" fill="url(#paper)"/>
+      </g>
+    </g>
+  </g>
+
+  <path d="M 383.41 100 L 640.59 100 C 722.19 100 763 100 799.79 112.14 L 806.92 113.89 C 854.88 131.34 892.66 169.12 910.11 217.08 L 911.86 224.21 C 924 261 924 301.81 924 383.41 L 924 640.59 C 924 722.19 924 763 911.86 799.79 L 910.11 806.92 C 892.66 854.88 854.88 892.66 806.92 910.11 L 799.79 911.86 C 763 924 722.19 924 640.59 924 L 383.41 924 C 301.81 924 261 924 224.21 911.86 L 217.08 910.11 C 169.12 892.66 131.34 854.88 113.89 806.92 L 112.14 799.79 C 100 763 100 722.19 100 640.59 L 100 383.41 C 100 301.81 100 261 112.14 224.21 L 113.89 217.08 C 131.34 169.12 169.12 131.34 217.08 113.89 L 224.21 112.14 C 261 100 301.81 100 383.41 100 Z" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#bodyClip)"/>
+</svg>
