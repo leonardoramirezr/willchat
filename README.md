@@ -1,24 +1,24 @@
 # WillChat
 
-Cliente de chat nativo para macOS (SwiftUI) con un diseño inspirado en ChatGPT, compatible con cualquier API estilo OpenAI (OpenAI, OpenRouter, Ollama, LM Studio, vLLM…).
+Native macOS chat client (SwiftUI) with a ChatGPT-inspired design, compatible with any OpenAI-style API (OpenAI, OpenRouter, Ollama, LM Studio, vLLM…).
 
-## Compilar
+## Build
 
-Requiere macOS 15+ y las Command Line Tools de Xcode.
+Requires macOS 15+ and Xcode Command Line Tools.
 
 ```sh
-make build     # genera build/WillChat.app
-make install   # copia la app a /Applications
+make build     # generates build/WillChat.app
+make install   # copies the app to /Applications
 ```
 
-## Funciones
+## Features
 
-- Primer arranque guiado: URL base + API key (verificada contra `/models`) y elección de modelo.
-- Barra lateral con nuevo chat (⌘N), búsqueda (⌘K), historial (⌃⌘S) y configuración (⌘,).
-- Respuestas en streaming con Markdown (código, listas, tablas).
-- Regenerar la respuesta a cualquier mensaje tuyo (botón ↻ junto a «Copiar») con los modelos de texto e imagen seleccionados en ese momento.
-- Generación de imágenes: el modelo decide cuándo llamar a la herramienta `generate_image`, que usa `/images/generations` (o `/images/edits` para modificar la imagen anterior). Las imágenes generadas se reenvían al modelo como contexto (visión) en los siguientes mensajes.
-- Archivos adjuntos: botón «+» (⌘U), arrastrar y soltar, o pegar (⌘V). Las imágenes se envían como visión; de PDF, Word/RTF/ODT y archivos de texto o código se extrae el texto y se incluye en el mensaje. Las imágenes adjuntas también se pueden modificar con `generate_image`.
-- Los chats, las imágenes y los adjuntos se guardan en `~/Library/Application Support/WillChat`; la API key se guarda en el Llavero.
+- Guided first launch: base URL + API key (verified against `/models`) and model selection.
+- Sidebar with new chat (⌘N), search (⌘K), history (⌃⌘S), and settings (⌘,).
+- Streaming responses with Markdown (code, lists, tables).
+- Regenerate the response to any of your messages (↻ button next to "Copy") using the text and image models currently selected.
+- Image generation: the model decides when to call the `generate_image` tool, which uses `/images/generations` (or `/images/edits` to modify the previous image). Generated images are sent back to the model as context (vision) in subsequent messages.
+- Attachments: "+" button (⌘U), drag and drop, or paste (⌘V). Images are sent as vision; text is extracted from PDF, Word/RTF/ODT, and text or code files and included in the message. Attached images can also be modified with `generate_image`.
+- Chats, images, and attachments are saved in `~/Library/Application Support/WillChat`; the API key is stored in the Keychain.
 
-Si tu proveedor no soporta *tool calling* o visión, desactiva esas opciones en Configuración.
+If your provider doesn't support *tool calling* or vision, disable those options in Settings.
