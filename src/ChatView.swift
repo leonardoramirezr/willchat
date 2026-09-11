@@ -305,6 +305,7 @@ private struct MessagesView: View {
     let live: LiveTurn?
 
     @State private var isNearBottom = true
+    @State private var pendingRegeneration: UUID?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -314,7 +315,9 @@ private struct MessagesView: View {
                         MessageRow(
                             message: message,
                             onRetry: message.id == messages.last?.id && message.errorText != nil
-                                ? { store.retryLastResponse() } : nil)
+                                ? { store.retryLastResponse() } : nil,
+                            onRegenerate: message.role == .user && !store.isStreaming
+                                ? { regenerate(message.id) } : nil)
                     }
                     if let live {
                         MessageRow(message: live.message, isLive: true, isGeneratingImage: live.isGeneratingImage)
@@ -350,6 +353,27 @@ private struct MessagesView: View {
             .onChange(of: live?.isGeneratingImage) {
                 if isNearBottom { proxy.scrollTo("bottom", anchor: .bottom) }
             }
+        }
+        .confirmationDialog(
+            "¿Regenerar la respuesta?",
+            isPresented: Binding(get: { pendingRegeneration != nil }, set: { if !$0 { pendingRegeneration = nil } }),
+            presenting: pendingRegeneration
+        ) { id in
+            Button("Regenerar", role: .destructive) { store.regenerateResponse(to: id) }
+            Button("Cancelar", role: .cancel) {}
+        } message: { _ in
+            Text("Se eliminarán los mensajes posteriores de esta conversación.")
+        }
+    }
+
+    /// Replacing only the reply right after the message needs no confirmation;
+    /// dropping later turns does.
+    private func regenerate(_ id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        if index + 2 < messages.count {
+            pendingRegeneration = id
+        } else {
+            store.regenerateResponse(to: id)
         }
     }
 }

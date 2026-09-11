@@ -16,6 +16,7 @@ make install   # copia la app a /Applications
 - Primer arranque guiado: URL base + API key (verificada contra `/models`) y elección de modelo.
 - Barra lateral con nuevo chat (⌘N), búsqueda (⌘K), historial (⌃⌘S) y configuración (⌘,).
 - Respuestas en streaming con Markdown (código, listas, tablas).
+- Regenerar la respuesta a cualquier mensaje tuyo (botón ↻ junto a «Copiar») con los modelos de texto e imagen seleccionados en ese momento.
 - Generación de imágenes: el modelo decide cuándo llamar a la herramienta `generate_image`, que usa `/images/generations` (o `/images/edits` para modificar la imagen anterior). Las imágenes generadas se reenvían al modelo como contexto (visión) en los siguientes mensajes.
 - Archivos adjuntos: botón «+» (⌘U), arrastrar y soltar, o pegar (⌘V). Las imágenes se envían como visión; de PDF, Word/RTF/ODT y archivos de texto o código se extrae el texto y se incluye en el mensaje. Las imágenes adjuntas también se pueden modificar con `generate_image`.
 - Los chats, las imágenes y los adjuntos se guardan en `~/Library/Application Support/WillChat`; la API key se guarda en el Llavero.

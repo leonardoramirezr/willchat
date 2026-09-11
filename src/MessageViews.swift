@@ -7,6 +7,8 @@ struct MessageRow: View {
     var isLive = false
     var isGeneratingImage = false
     var onRetry: (() -> Void)?
+    /// User messages only; `nil` disables the button (e.g. while a reply is streaming).
+    var onRegenerate: (() -> Void)?
 
     @State private var isHovering = false
 
@@ -47,9 +49,25 @@ struct MessageRow: View {
                                 .fill(Color.primary.opacity(0.07))
                         )
                 }
-                CopyButton(text: message.content)
-                    .opacity(isHovering ? 1 : 0)
             }
+            HStack(spacing: 0) {
+                Button {
+                    onRegenerate?()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundStyle(onRegenerate == nil ? .tertiary : .secondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(onRegenerate == nil)
+                .help("Regenerar respuesta con los modelos actuales")
+                if !message.content.isEmpty {
+                    CopyButton(text: message.content)
+                }
+            }
+            .opacity(isHovering ? 1 : 0)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
