@@ -10,10 +10,11 @@ enum ImageStore {
         Persistence.imagesDirectory.appending(path: image.filename)
     }
 
-    static func save(_ data: Data, prompt: String?) throws -> StoredImage {
+    static func save(_ data: Data, prompt: String?, title: String? = nil) throws -> StoredImage {
         Persistence.ensureDirectories()
         let id = UUID()
-        let image = StoredImage(id: id, filename: "\(id.uuidString).\(fileExtension(for: data))", prompt: prompt)
+        let image = StoredImage(
+            id: id, filename: "\(id.uuidString).\(fileExtension(for: data))", prompt: prompt, title: title)
         try data.write(to: fileURL(for: image), options: .atomic)
         return image
     }

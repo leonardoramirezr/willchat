@@ -35,13 +35,12 @@ struct ChatView: View {
 
             ComposerView(
                 text: $draft,
-                attachments: attachments,
+                attachments: $attachments,
                 isStreaming: store.isStreaming,
                 focusToken: ui.composerFocusToken,
                 onSend: submit,
                 onStop: store.stop,
                 onAttach: pickFiles,
-                onRemoveAttachment: { id in attachments.removeAll { $0.id == id } },
                 onPaste: paste
             )
             .frame(maxWidth: 760)

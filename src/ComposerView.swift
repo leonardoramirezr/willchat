@@ -3,13 +3,12 @@ import SwiftUI
 
 struct ComposerView: View {
     @Binding var text: String
-    let attachments: [DraftAttachment]
+    @Binding var attachments: [DraftAttachment]
     let isStreaming: Bool
     let focusToken: Int
     let onSend: () -> Void
     let onStop: () -> Void
     let onAttach: () -> Void
-    let onRemoveAttachment: (DraftAttachment.ID) -> Void
     /// Returns `true` when the pasteboard held files or images that were attached.
     let onPaste: (NSPasteboard) -> Bool
 
@@ -22,9 +21,9 @@ struct ComposerView: View {
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(attachments) { attachment in
-                            DraftAttachmentView(attachment: attachment) {
-                                onRemoveAttachment(attachment.id)
+                        ForEach($attachments) { $attachment in
+                            DraftAttachmentView(attachment: $attachment) {
+                                attachments.removeAll { $0.id == attachment.id }
                             }
                         }
                     }
@@ -94,20 +93,41 @@ struct ComposerView: View {
     }
 }
 
-/// A pending attachment in the composer, with a button to remove it.
+/// A pending attachment in the composer, with a button to remove it. Images
+/// also get a title field so the prompt can refer to them by name.
 private struct DraftAttachmentView: View {
-    let attachment: DraftAttachment
+    @Binding var attachment: DraftAttachment
     let onRemove: () -> Void
+
+    @Environment(UIState.self) private var ui
 
     var body: some View {
         Group {
             if let preview = attachment.preview {
-                Image(nsImage: preview)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .help(attachment.name)
+                HStack(spacing: 10) {
+                    Image(nsImage: preview)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .help(attachment.name)
+                    TextField("Añadir título", text: $attachment.title)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(width: 130)
+                        .onSubmit { ui.focusComposer() }
+                        .help("Título para referirte a esta imagen en el mensaje")
+                }
+                .padding(6)
+                .padding(.trailing, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12))
+                )
             } else {
                 FileChip(name: attachment.name, byteCount: attachment.data.count)
             }

@@ -9,6 +9,8 @@ struct StoredImage: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var filename: String
     var prompt: String?
+    /// Title the user gave an attached image, so they can refer to it by name.
+    var title: String?
 }
 
 /// A document the user attached to a message; its text is sent to the model.

@@ -27,7 +27,18 @@ struct MessageRow: View {
             if !message.images.isEmpty || !message.files.isEmpty {
                 TrailingFlowLayout(spacing: 8) {
                     ForEach(message.images) { image in
-                        GeneratedImageView(image: image, maxSide: 240)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            GeneratedImageView(image: image, maxSide: 240)
+                            if let title = image.title {
+                                Text(title)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 240, alignment: .trailing)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
                     ForEach(message.files) { file in
                         StoredFileView(file: file)
@@ -368,7 +379,7 @@ struct GeneratedImageView: View {
                 .onHover { isHovering = $0 }
                 .animation(.easeOut(duration: 0.12), value: isHovering)
                 .onTapGesture(count: 2) { NSWorkspace.shared.open(ImageStore.fileURL(for: image)) }
-                .help(image.prompt ?? "")
+                .help(image.prompt ?? image.title ?? "")
                 .contextMenu {
                     Button("Abrir en Vista Previa") { NSWorkspace.shared.open(ImageStore.fileURL(for: image)) }
                     Button("Copiar imagen") {

@@ -132,7 +132,8 @@ final class ChatStore {
         do {
             for attachment in attachments {
                 switch attachment.kind {
-                case .image: message.images.append(try ImageStore.save(attachment.data, prompt: nil))
+                case .image:
+                    message.images.append(try ImageStore.save(attachment.data, prompt: nil, title: attachment.trimmedTitle))
                 case .document: message.files.append(try FileStore.save(attachment.data, name: attachment.name))
                 }
             }
@@ -146,7 +147,7 @@ final class ChatStore {
         if let selectedID, conversation(selectedID) != nil {
             conversationID = selectedID
         } else {
-            let seed = text.isEmpty ? attachments.map(\.name).joined(separator: ", ") : text
+            let seed = text.isEmpty ? attachments.map { $0.trimmedTitle ?? $0.name }.joined(separator: ", ") : text
             let conversation = Conversation(title: Self.provisionalTitle(from: seed))
             conversations.insert(conversation, at: 0)
             conversationID = conversation.id
@@ -292,9 +293,14 @@ final class ChatStore {
                     ])
                     parts += generatedURLs.map { ["type": "image_url", "image_url": ["url": $0]] }
                 }
-                parts += message.images
-                    .compactMap { ImageStore.contextDataURL(for: $0, maxPixelSize: 2048) }
-                    .map { ["type": "image_url", "image_url": ["url": $0]] }
+                for image in message.images {
+                    guard let url = ImageStore.contextDataURL(for: image, maxPixelSize: 2048) else { continue }
+                    // The label right before the image is what ties its title to it.
+                    if let title = image.title {
+                        parts.append(["type": "text", "text": Self.imageLabel(title)])
+                    }
+                    parts.append(["type": "image_url", "image_url": ["url": url]])
+                }
 
                 let text = userText(for: message)
                 if parts.isEmpty {
@@ -321,6 +327,10 @@ final class ChatStore {
             return "<file name=\"\(file.name)\">\n\(body)\n</file>"
         }
         return (documents + [message.content]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    private static func imageLabel(_ title: String) -> String {
+        "[Image titled \"\(title)\"]"
     }
 
     private func apiMessages(forAssistant message: ChatMessage, useTools: Bool) -> [[String: Any]] {
@@ -358,7 +368,9 @@ final class ChatStore {
         var prompt = """
         You are WillChat, a helpful assistant in a macOS chat app. Reply in the same language the user writes in. \
         Use Markdown when it improves readability. Current date: \(date). The user can attach images and files; \
-        the contents of attached files appear in their message inside <file name="…"> tags.
+        the contents of attached files appear in their message inside <file name="…"> tags. An attached image may be \
+        preceded by a label like [Image titled "…"]: that title names the image right after it, and the user may \
+        refer to the image by that title.
         """
         if useTools {
             prompt += """
@@ -367,7 +379,8 @@ final class ChatStore {
             You can create images with the `generate_image` tool. Call it whenever the user asks you to create, draw, \
             design, illustrate or modify an image, writing a detailed prompt. To change the most recent image in the \
             conversation (one you generated or one the user attached), set `edit_previous_image` to true and describe \
-            the full desired result. Generated images are shown to the \
+            the full desired result; if the user names a titled image instead, also pass its title as `image_title`. \
+            Generated images are shown to the \
             user automatically: never include links or Markdown images for them, just add a brief comment.
             """
         }
@@ -398,7 +411,11 @@ final class ChatStore {
                         ],
                         "edit_previous_image": [
                             "type": "boolean",
-                            "description": "true to modify the most recent image in this conversation (generated or attached by the user) instead of creating a new one from scratch.",
+                            "description": "true to modify an existing image in this conversation (generated or attached by the user) instead of creating a new one from scratch. Defaults to the most recent image.",
+                        ],
+                        "image_title": [
+                            "type": "string",
+                            "description": "With edit_previous_image: the title of the attached image to modify, when the user refers to one by its title.",
                         ],
                     ],
                     "required": ["prompt"],
@@ -425,13 +442,14 @@ final class ChatStore {
         }
         let size = Self.imageSize(orientation: arguments["orientation"] as? String, model: model)
         let wantsEdit = arguments["edit_previous_image"] as? Bool ?? false
+        let sourceTitle = arguments["image_title"] as? String
 
         live?.isGeneratingImage = true
         defer { live?.isGeneratingImage = false }
 
         do {
             var data: Data?
-            if wantsEdit, let previous = latestImage(in: conversationID, current: current),
+            if wantsEdit, let previous = sourceImage(titled: sourceTitle, in: conversationID, current: current),
                let original = try? Data(contentsOf: ImageStore.fileURL(for: previous)) {
                 // Not every provider supports edits; fall back to a fresh generation.
                 data = try? await client.editImage(
@@ -453,9 +471,17 @@ final class ChatStore {
         }
     }
 
-    private func latestImage(in conversationID: UUID, current: ChatMessage) -> StoredImage? {
-        if let image = current.images.last { return image }
-        return conversation(conversationID)?.messages.reversed().lazy.compactMap(\.images.last).first
+    /// The most recent image with the given title, or the most recent image of all
+    /// when there's no title or nothing matches it.
+    private func sourceImage(titled title: String?, in conversationID: UUID, current: ChatMessage) -> StoredImage? {
+        let images = ((conversation(conversationID)?.messages ?? []) + [current]).flatMap(\.images)
+        let wanted = title?.trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”«»").union(.whitespaces)) ?? ""
+        if !wanted.isEmpty, let match = images.last(where: { image in
+            image.title?.compare(wanted, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }) {
+            return match
+        }
+        return images.last
     }
 
     private static func imageSize(orientation: String?, model: String) -> String? {
@@ -505,7 +531,10 @@ final class ChatStore {
 
     private static func titleSource(for message: ChatMessage) -> String {
         var names = message.files.map { "[Attached file: \($0.name)]" }
-        if !message.images.isEmpty { names.append("[\(message.images.count) attached image(s)]") }
+        let titled = message.images.compactMap(\.title)
+        names += titled.map { "[Attached image: \($0)]" }
+        let untitled = message.images.count - titled.count
+        if untitled > 0 { names.append("[\(untitled) attached image(s)]") }
         return (names + [message.content]).filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }

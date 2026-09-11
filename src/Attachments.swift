@@ -34,6 +34,14 @@ struct DraftAttachment: Identifiable {
     let data: Data
     /// Thumbnail shown in the composer (images only).
     let preview: NSImage?
+    /// Optional title the user types for an image, sent to the model next to it.
+    var title = ""
+
+    /// The title to store, or nil when the user left it blank.
+    var trimmedTitle: String? {
+        let title = title.trimmed
+        return title.isEmpty ? nil : title
+    }
 
     static let maxFileSize = 25 * 1024 * 1024
     static let maxCount = 10
