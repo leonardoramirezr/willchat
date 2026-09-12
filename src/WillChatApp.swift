@@ -109,11 +109,12 @@ struct MainView: View {
 
     var body: some View {
         @Bindable var ui = ui
+        let railWidth: CGFloat = 65
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                SidebarHeader(expanded: ui.historyVisible)
+                SidebarHeader(expanded: ui.historyVisible, railWidth: railWidth)
                 HStack(spacing: 0) {
-                    SidebarRail()
+                    SidebarRail(railWidth: railWidth)
                     if ui.historyVisible {
                         HistoryPanel()
                             .frame(width: 250)

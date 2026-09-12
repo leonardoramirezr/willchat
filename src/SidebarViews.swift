@@ -6,6 +6,7 @@ let titleBarHeight: CGFloat = 40
 /// App name above the sidebar; collapses to the app icon when only the rail is visible.
 struct SidebarHeader: View {
     let expanded: Bool
+    let railWidth: CGFloat
 
     /// Full screen hides the traffic lights, so their reserved space isn't needed.
     @State private var isFullScreen = NSApp.windows.contains { $0.styleMask.contains(.fullScreen) }
@@ -23,7 +24,7 @@ struct SidebarHeader: View {
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 30, height: 30)
-                    .frame(width: 60)
+                    .frame(width: railWidth)
                     .transition(.opacity)
             }
         }
@@ -46,6 +47,8 @@ struct SidebarRail: View {
     @Environment(ChatStore.self) private var store
     @Environment(UIState.self) private var ui
 
+    let railWidth: CGFloat
+
     var body: some View {
         VStack(spacing: 6) {
             RailButton(systemImage: "square.and.pencil", help: "Nuevo chat (⌘N)") {
@@ -67,7 +70,7 @@ struct SidebarRail: View {
         }
         .padding(.top, 8)
         .padding(.bottom, 14)
-        .frame(width: 60)
+        .frame(width: railWidth)
         .frame(maxHeight: .infinity)
     }
 }
