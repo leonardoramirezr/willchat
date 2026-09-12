@@ -178,7 +178,7 @@ struct MessageRow: View {
     }
 }
 
-/// Inline editor for a sent user message. Return sends, Shift-Return adds a line, Esc cancels.
+/// Inline editor for a sent user message. ⌘Return sends, Return or Shift-Return adds a line, Esc cancels.
 private struct MessageEditor: View {
     let initialText: String
     /// Messages with attachments can be sent without text.
@@ -202,7 +202,7 @@ private struct MessageEditor: View {
                 .frame(minHeight: 22)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
-                    guard !press.modifiers.contains(.shift) else { return .ignored }
+                    guard press.modifiers == .command else { return .ignored }
                     submit()
                     return .handled
                 }

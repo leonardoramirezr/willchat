@@ -88,7 +88,7 @@ struct ComposerView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSend && !isStreaming)
-            .help(isStreaming ? "Detener (⌘.)" : "Enviar (↩︎)")
+            .help(isStreaming ? "Detener (⌘.)" : "Enviar (⌘↩︎)")
         }
     }
 }
@@ -148,7 +148,7 @@ private struct DraftAttachmentView: View {
     }
 }
 
-/// Multi-line text input: Return sends, Shift/Option+Return inserts a new line,
+/// Multi-line text input: ⌘Return sends, Return or Shift/Option+Return inserts a new line,
 /// and the view grows with its content up to `maxHeight`.
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
@@ -191,6 +191,9 @@ struct ComposerTextView: NSViewRepresentable {
         textView.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.recalculateHeight() }
         textView.onPaste = { [weak coordinator = context.coordinator] pasteboard in
             coordinator?.parent.onPaste(pasteboard) ?? false
+        }
+        textView.onCommandReturn = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onSubmit()
         }
 
         let scrollView = NSScrollView()
@@ -236,18 +239,6 @@ struct ComposerTextView: NSViewRepresentable {
             recalculateHeight()
         }
 
-        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
-            if textView.hasMarkedText() { return false }
-            let flags = NSApp.currentEvent?.modifierFlags ?? []
-            if flags.contains(.shift) || flags.contains(.option) {
-                textView.insertNewlineIgnoringFieldEditor(nil)
-            } else {
-                parent.onSubmit()
-            }
-            return true
-        }
-
         func recalculateHeight() {
             guard let textView, let layoutManager = textView.layoutManager,
                   let container = textView.textContainer
@@ -267,7 +258,20 @@ struct ComposerTextView: NSViewRepresentable {
 final class ComposerNSTextView: NSTextView {
     var onWidthChange: (() -> Void)?
     var onPaste: ((NSPasteboard) -> Bool)?
+    var onCommandReturn: (() -> Void)?
     private var didRequestInitialFocus = false
+
+    /// ⌘Return arrives as a key equivalent before `keyDown`, so it is caught here.
+    /// Plain Return (with or without Shift/Option) falls through to insert a new line.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if window?.firstResponder === self, flags == .command, !hasMarkedText(),
+           event.keyCode == 36 || event.keyCode == 76 {
+            onCommandReturn?()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     /// Accept only dropped text, leaving files and images to the chat view (which
     /// attaches them) instead of inserting their paths here.
