@@ -304,19 +304,31 @@ private struct MessagesView: View {
     let live: LiveTurn?
 
     @State private var isNearBottom = true
-    @State private var pendingRegeneration: UUID?
+    @State private var pendingRegeneration: Regeneration?
+    @State private var editingID: UUID?
+
+    private struct Regeneration {
+        let messageID: UUID
+        var editedContent: String?
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     ForEach(messages) { message in
+                        let canRegenerate = message.role == .user && !store.isStreaming
                         MessageRow(
                             message: message,
                             onRetry: message.id == messages.last?.id && message.errorText != nil
                                 ? { store.retryLastResponse() } : nil,
-                            onRegenerate: message.role == .user && !store.isStreaming
-                                ? { regenerate(message.id) } : nil)
+                            onRegenerate: canRegenerate
+                                ? { regenerate(Regeneration(messageID: message.id)) } : nil,
+                            onEdit: canRegenerate ? { editingID = message.id } : nil,
+                            isEditing: editingID == message.id,
+                            onCancelEdit: { editingID = nil },
+                            onSubmitEdit: canRegenerate
+                                ? { regenerate(Regeneration(messageID: message.id, editedContent: $0)) } : nil)
                     }
                     if let live {
                         MessageRow(message: live.message, isLive: true, isGeneratingImage: live.isGeneratingImage)
@@ -338,6 +350,7 @@ private struct MessagesView: View {
                 isNearBottom = nearBottom
             }
             .onChange(of: conversationID) {
+                editingID = nil
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .onChange(of: messages.count) {
@@ -357,8 +370,10 @@ private struct MessagesView: View {
             "¿Regenerar la respuesta?",
             isPresented: Binding(get: { pendingRegeneration != nil }, set: { if !$0 { pendingRegeneration = nil } }),
             presenting: pendingRegeneration
-        ) { id in
-            Button("Regenerar", role: .destructive) { store.regenerateResponse(to: id) }
+        ) { regeneration in
+            Button(regeneration.editedContent == nil ? "Regenerar" : "Enviar", role: .destructive) {
+                perform(regeneration)
+            }
             Button("Cancelar", role: .cancel) {}
         } message: { _ in
             Text("Se eliminarán los mensajes posteriores de esta conversación.")
@@ -367,12 +382,17 @@ private struct MessagesView: View {
 
     /// Replacing only the reply right after the message needs no confirmation;
     /// dropping later turns does.
-    private func regenerate(_ id: UUID) {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+    private func regenerate(_ regeneration: Regeneration) {
+        guard let index = messages.firstIndex(where: { $0.id == regeneration.messageID }) else { return }
         if index + 2 < messages.count {
-            pendingRegeneration = id
+            pendingRegeneration = regeneration
         } else {
-            store.regenerateResponse(to: id)
+            perform(regeneration)
         }
+    }
+
+    private func perform(_ regeneration: Regeneration) {
+        if regeneration.editedContent != nil { editingID = nil }
+        store.regenerateResponse(to: regeneration.messageID, editedContent: regeneration.editedContent)
     }
 }

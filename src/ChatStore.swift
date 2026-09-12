@@ -172,16 +172,23 @@ final class ChatStore {
         startTurn(in: id)
     }
 
-    /// Drops everything after a user message and answers it again with the current settings.
-    func regenerateResponse(to messageID: UUID) {
+    /// Drops everything after a user message and answers it again with the current settings,
+    /// replacing the message's text first when `editedContent` is given.
+    func regenerateResponse(to messageID: UUID, editedContent: String? = nil) {
         guard !isStreaming, let id = selectedID, let messages = conversation(id)?.messages,
               let index = messages.firstIndex(where: { $0.id == messageID }),
               messages[index].role == .user
         else { return }
+        let content = editedContent?.trimmed ?? messages[index].content
+        let message = messages[index]
+        guard !content.isEmpty || !message.images.isEmpty || !message.files.isEmpty else { return }
         let removed = messages[(index + 1)...]
         ImageStore.delete(removed.flatMap(\.images))
         FileStore.delete(removed.flatMap(\.files))
-        mutate(id, touch: false) { $0.messages.removeSubrange((index + 1)...) }
+        mutate(id, touch: false) {
+            $0.messages[index].content = content
+            $0.messages.removeSubrange((index + 1)...)
+        }
         startTurn(in: id)
     }
 

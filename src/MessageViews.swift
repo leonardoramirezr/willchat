@@ -9,6 +9,12 @@ struct MessageRow: View {
     var onRetry: (() -> Void)?
     /// User messages only; `nil` disables the button (e.g. while a reply is streaming).
     var onRegenerate: (() -> Void)?
+    /// User messages only: starts editing the prompt; `nil` disables the button.
+    var onEdit: (() -> Void)?
+    var isEditing = false
+    var onCancelEdit: (() -> Void)?
+    /// Receives the edited text; `nil` disables sending (e.g. while a reply is streaming).
+    var onSubmitEdit: ((String) -> Void)?
 
     @State private var isHovering = false
 
@@ -46,7 +52,14 @@ struct MessageRow: View {
                 }
                 .padding(.leading, 120)
             }
-            if !message.content.isEmpty {
+            if isEditing {
+                MessageEditor(
+                    initialText: message.content,
+                    canBeEmpty: !message.images.isEmpty || !message.files.isEmpty,
+                    onCancel: { onCancelEdit?() },
+                    onSubmit: onSubmitEdit)
+                    .padding(.leading, 120)
+            } else if !message.content.isEmpty {
                 HStack {
                     Spacer(minLength: 120)
                     Text(message.content)
@@ -61,26 +74,44 @@ struct MessageRow: View {
                         )
                 }
             }
-            HStack(spacing: 0) {
-                Button {
-                    onRegenerate?()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12))
-                        .foregroundStyle(onRegenerate == nil ? .tertiary : .secondary)
-                        .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(onRegenerate == nil)
-                .help("Regenerar respuesta con los modelos actuales")
-                if !message.content.isEmpty {
-                    CopyButton(text: message.content)
-                }
+            if !isEditing {
+                userActions
             }
-            .opacity(isHovering ? 1 : 0)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var userActions: some View {
+        HStack(spacing: 0) {
+            Button {
+                onEdit?()
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 12))
+                    .foregroundStyle(onEdit == nil ? .tertiary : .secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(onEdit == nil)
+            .help("Editar mensaje")
+            Button {
+                onRegenerate?()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+                    .foregroundStyle(onRegenerate == nil ? .tertiary : .secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(onRegenerate == nil)
+            .help("Regenerar respuesta con los modelos actuales")
+            if !message.content.isEmpty {
+                CopyButton(text: message.content)
+            }
+        }
+        .opacity(isHovering ? 1 : 0)
     }
 
     private var assistantBody: some View {
@@ -131,6 +162,64 @@ struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Inline editor for a sent user message. Return sends, Shift-Return adds a line, Esc cancels.
+private struct MessageEditor: View {
+    let initialText: String
+    /// Messages with attachments can be sent without text.
+    let canBeEmpty: Bool
+    let onCancel: () -> Void
+    let onSubmit: ((String) -> Void)?
+
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    private var canSend: Bool { onSubmit != nil && (canBeEmpty || !text.trimmed.isEmpty) }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 10) {
+            TextEditor(text: $text)
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 22)
+                .focused($isFocused)
+                .onKeyPress(.return, phases: .down) { press in
+                    guard !press.modifiers.contains(.shift) else { return .ignored }
+                    submit()
+                    return .handled
+                }
+                .onExitCommand(perform: onCancel)
+
+            HStack(spacing: 8) {
+                Button("Cancelar", action: onCancel)
+                    .controlSize(.large)
+                Button("Enviar", action: submit)
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSend)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.primary.opacity(0.07))
+        )
+        .onAppear {
+            text = initialText
+            isFocused = true
+        }
+    }
+
+    private func submit() {
+        guard canSend else { return }
+        onSubmit?(text)
     }
 }
 
