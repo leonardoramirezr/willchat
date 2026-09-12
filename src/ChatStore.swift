@@ -319,7 +319,7 @@ final class ChatStore {
             }
         }
 
-        var body: [String: Any] = ["model": model, "messages": messages, "stream": true]
+        var body: [String: Any] = ["model": model, "messages": messages, "stream": false]
         if useTools { body["tools"] = [Self.imageTool] }
         return try JSONSerialization.data(withJSONObject: body)
     }

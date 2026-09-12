@@ -162,8 +162,11 @@ enum RawFormat {
             while end < rest.endIndex, isBase64(rest[end]) { end = rest.index(after: end) }
             let length = rest.distance(from: start, to: end)
             if length > 128 {
-                let keep = rest.index(start, offsetBy: 32)
-                result += rest[start..<keep] + "…[\(length - 32) caracteres base64 omitidos]"
+                var keep = rest.index(start, offsetBy: 32)
+                // Never cut between a backslash and the character it escapes.
+                if rest[rest.index(before: keep)] == "\\" { keep = rest.index(before: keep) }
+                let kept = rest.distance(from: start, to: keep)
+                result += rest[start..<keep] + "…[\(length - kept) caracteres base64 omitidos]"
             } else {
                 result += rest[start..<end]
             }
@@ -172,9 +175,11 @@ enum RawFormat {
         return result + rest
     }
 
+    /// `JSONSerialization` escapes forward slashes, so a data URL reaches us as
+    /// `data:image\/jpeg;base64,\/9j\/4AAQ…`; the backslash counts as part of the run.
     private static func isBase64(_ character: Character) -> Bool {
         character.isLetter && character.isASCII || character.isNumber && character.isASCII
-            || "+/=-_".contains(character)
+            || "+/=-_\\".contains(character)
     }
 
     /// Re-indents JSON by moving whitespace only, so keys keep the order the

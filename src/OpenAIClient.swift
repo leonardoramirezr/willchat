@@ -136,7 +136,8 @@ struct OpenAIClient: Sendable {
                         throw APIError.http(status: status, message: Self.errorMessage(from: data, status: status))
                     }
 
-                    // Some servers ignore `stream: true` and answer with a single JSON body.
+                    // Requests use `stream: false`, so the usual answer is a single JSON body.
+                    // SSE is still parsed below for servers that stream anyway.
                     let contentType = http?.value(forHTTPHeaderField: "Content-Type") ?? ""
                     if contentType.contains("application/json") {
                         var data = Data()
