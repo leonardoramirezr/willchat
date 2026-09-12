@@ -110,12 +110,15 @@ struct MainView: View {
     var body: some View {
         @Bindable var ui = ui
         HStack(spacing: 0) {
-            HStack(spacing: 0) {
-                SidebarRail()
-                if ui.historyVisible {
-                    HistoryPanel()
-                        .frame(width: 250)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+            VStack(alignment: .leading, spacing: 0) {
+                SidebarHeader(expanded: ui.historyVisible)
+                HStack(spacing: 0) {
+                    SidebarRail()
+                    if ui.historyVisible {
+                        HistoryPanel()
+                            .frame(width: 250)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
                 }
             }
             .background(VisualEffectBackground(material: .sidebar))

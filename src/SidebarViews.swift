@@ -3,6 +3,45 @@ import SwiftUI
 /// Leading space reserved for the window's traffic-light buttons.
 let titleBarHeight: CGFloat = 40
 
+/// App name above the sidebar; collapses to the app icon when only the rail is visible.
+struct SidebarHeader: View {
+    let expanded: Bool
+
+    /// Full screen hides the traffic lights, so their reserved space isn't needed.
+    @State private var isFullScreen = NSApp.windows.contains { $0.styleMask.contains(.fullScreen) }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if expanded {
+                Text("WillChat")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .padding(.leading, 16)
+                    .transition(.opacity)
+            } else {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 30, height: 30)
+                    .frame(width: 60)
+                    .transition(.opacity)
+            }
+        }
+        .frame(height: 36)
+        .padding(.top, isFullScreen ? 12 : titleBarHeight)
+        // Update after the system's full-screen transition finishes; changes made during it
+        // are hidden behind its snapshot crossfade and look like a jump.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            withAnimation(.smooth(duration: 0.35)) { isFullScreen = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+            withAnimation(.smooth(duration: 0.35)) { isFullScreen = false }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("WillChat")
+    }
+}
+
 struct SidebarRail: View {
     @Environment(ChatStore.self) private var store
     @Environment(UIState.self) private var ui
@@ -26,7 +65,7 @@ struct SidebarRail: View {
                 ui.showSettings = true
             }
         }
-        .padding(.top, titleBarHeight + 4)
+        .padding(.top, 8)
         .padding(.bottom, 14)
         .frame(width: 60)
         .frame(maxHeight: .infinity)
@@ -74,7 +113,7 @@ struct HistoryPanel: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 18)
-                .padding(.top, titleBarHeight + 12)
+                .padding(.top, 16)
                 .padding(.bottom, 6)
 
             if store.conversations.isEmpty {
