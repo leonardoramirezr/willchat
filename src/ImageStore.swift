@@ -19,6 +19,17 @@ enum ImageStore {
         return image
     }
 
+    /// Copies the image's file under a new id, keeping its prompt and title.
+    static func duplicate(_ image: StoredImage) throws -> StoredImage {
+        let id = UUID()
+        let ext = (image.filename as NSString).pathExtension
+        let copy = StoredImage(
+            id: id, filename: ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)",
+            prompt: image.prompt, title: image.title)
+        try FileManager.default.copyItem(at: fileURL(for: image), to: fileURL(for: copy))
+        return copy
+    }
+
     static func nsImage(for image: StoredImage) -> NSImage? {
         let key = image.id.uuidString as NSString
         if let cached = cache.object(forKey: key) { return cached }

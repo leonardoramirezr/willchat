@@ -110,6 +110,17 @@ enum FileStore {
         return file
     }
 
+    /// Copies the file under a new id, keeping its original name.
+    static func duplicate(_ file: StoredFile) throws -> StoredFile {
+        let id = UUID()
+        let ext = (file.name as NSString).pathExtension
+        let copy = StoredFile(
+            id: id, filename: ext.isEmpty ? id.uuidString : "\(id.uuidString).\(ext)",
+            name: file.name, byteCount: file.byteCount)
+        try FileManager.default.copyItem(at: fileURL(for: file), to: fileURL(for: copy))
+        return copy
+    }
+
     static func delete(_ files: [StoredFile]) {
         for file in files {
             try? FileManager.default.removeItem(at: fileURL(for: file))

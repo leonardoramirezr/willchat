@@ -73,6 +73,54 @@ final class ChatStore {
         for conversation in conversations { delete(conversation.id) }
     }
 
+    /// Opens a new conversation holding the history before a user message and returns that
+    /// message, so its text and attachments can be put back in the composer. When the message
+    /// starts the conversation there's no history to copy, so this just starts a new chat.
+    func fork(from messageID: UUID) -> ChatMessage? {
+        guard let id = selectedID, let source = conversation(id),
+              let index = source.messages.firstIndex(where: { $0.id == messageID }),
+              source.messages[index].role == .user
+        else { return nil }
+        let prompt = source.messages[index]
+        guard index > 0 else {
+            selectedID = nil
+            return prompt
+        }
+
+        // Each conversation owns its files (deleting one removes them), so the fork gets copies.
+        var copiedImages: [StoredImage] = []
+        var copiedFiles: [StoredFile] = []
+        var history: [ChatMessage] = []
+        for var message in source.messages[..<index] {
+            var imageIDs: [UUID: UUID] = [:]
+            message.id = UUID()
+            message.images = message.images.compactMap { image in
+                guard let copy = try? ImageStore.duplicate(image) else { return nil }
+                imageIDs[image.id] = copy.id
+                copiedImages.append(copy)
+                return copy
+            }
+            message.files = message.files.compactMap { file in
+                guard let copy = try? FileStore.duplicate(file) else { return nil }
+                copiedFiles.append(copy)
+                return copy
+            }
+            for round in message.toolRounds.indices {
+                for call in message.toolRounds[round].calls.indices {
+                    message.toolRounds[round].calls[call].imageIDs =
+                        message.toolRounds[round].calls[call].imageIDs.compactMap { imageIDs[$0] }
+                }
+            }
+            history.append(message)
+        }
+
+        let fork = Conversation(title: source.title, messages: history)
+        conversations.insert(fork, at: 0)
+        Persistence.save(fork)
+        selectedID = fork.id
+        return prompt
+    }
+
     private func mutate(_ id: UUID, touch: Bool = true, _ change: (inout Conversation) -> Void) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         var conversation = conversations[index]

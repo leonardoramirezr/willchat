@@ -15,6 +15,8 @@ struct MessageRow: View {
     var onCancelEdit: (() -> Void)?
     /// Receives the edited text; `nil` disables sending (e.g. while a reply is streaming).
     var onSubmitEdit: ((String) -> Void)?
+    /// User messages only: opens a new chat with the history before this prompt.
+    var onFork: (() -> Void)?
 
     @State private var isHovering = false
 
@@ -107,6 +109,17 @@ struct MessageRow: View {
             .buttonStyle(.plain)
             .disabled(onRegenerate == nil)
             .help("Regenerar respuesta con los modelos actuales")
+            if let onFork {
+                Button(action: onFork) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Bifurcar: nuevo chat con el historial anterior y este mensaje en el compositor")
+            }
             if !message.content.isEmpty {
                 CopyButton(text: message.content)
             }

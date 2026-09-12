@@ -29,7 +29,7 @@ struct ChatView: View {
                     .padding(.bottom, 28)
                     .transition(.opacity)
             } else {
-                MessagesView(conversationID: conversation?.id, messages: messages, live: live)
+                MessagesView(conversationID: conversation?.id, messages: messages, live: live, onFork: fork)
                     .transition(.opacity)
             }
 
@@ -87,6 +87,36 @@ struct ChatView: View {
         } catch {
             attachmentError = "No se pudieron guardar los adjuntos. \(error.localizedDescription)"
         }
+    }
+
+    /// Opens the fork and puts the prompt's text and attachments back in the composer.
+    private func fork(from messageID: UUID) {
+        guard let prompt = store.fork(from: messageID) else { return }
+        var restored: [DraftAttachment] = []
+        var failed: [String] = []
+        for image in prompt.images {
+            let name = image.title ?? "Imagen"
+            do {
+                var attachment = try DraftAttachment.image(Data(contentsOf: ImageStore.fileURL(for: image)), name: name)
+                attachment.title = image.title ?? ""
+                restored.append(attachment)
+            } catch {
+                failed.append(name)
+            }
+        }
+        for file in prompt.files {
+            if let data = try? Data(contentsOf: FileStore.fileURL(for: file)) {
+                restored.append(DraftAttachment(name: file.name, kind: .document, data: data, preview: nil))
+            } else {
+                failed.append(file.name)
+            }
+        }
+        draft = prompt.content
+        attachments = restored
+        if !failed.isEmpty {
+            attachmentError = "No se encontraron estos adjuntos: \(failed.joined(separator: ", "))."
+        }
+        ui.focusComposer()
     }
 
     // MARK: Attachments
@@ -302,6 +332,7 @@ private struct MessagesView: View {
     let conversationID: UUID?
     let messages: [ChatMessage]
     let live: LiveTurn?
+    let onFork: (UUID) -> Void
 
     @State private var isNearBottom = true
     @State private var pendingRegeneration: Regeneration?
@@ -328,7 +359,8 @@ private struct MessagesView: View {
                             isEditing: editingID == message.id,
                             onCancelEdit: { editingID = nil },
                             onSubmitEdit: canRegenerate
-                                ? { regenerate(Regeneration(messageID: message.id, editedContent: $0)) } : nil)
+                                ? { regenerate(Regeneration(messageID: message.id, editedContent: $0)) } : nil,
+                            onFork: message.role == .user ? { onFork(message.id) } : nil)
                     }
                     if let live {
                         MessageRow(message: live.message, isLive: true, isGeneratingImage: live.isGeneratingImage)
