@@ -178,7 +178,7 @@ struct OnboardingView: View {
                         ModelField(title: "", placeholder: AppSettings.defaultImageModel, model: $imageModel, options: ModelFilter.image(models))
                             .textFieldStyle(.roundedBorder)
                             .controlSize(.large)
-                        Text("Cuando pidas una imagen, el modelo de chat la solicitará a /images/generations.")
+                        Text("Cuando pidas una imagen, el modelo de chat usará la herramienta nativa image_generation (/responses).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

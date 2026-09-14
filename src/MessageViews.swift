@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct MessageRow: View {
     let message: ChatMessage
     var isLive = false
-    var isGeneratingImage = false
     var onRetry: (() -> Void)?
     /// User messages only; `nil` disables the button (e.g. while a reply is streaming).
     var onRegenerate: (() -> Void)?
@@ -142,10 +141,6 @@ struct MessageRow: View {
                 }
             }
 
-            if isGeneratingImage {
-                ImagePlaceholderView()
-            }
-
             if !message.content.isEmpty {
                 MarkdownView(text: message.content)
             }
@@ -154,7 +149,7 @@ struct MessageRow: View {
                 GeneratedImageView(image: image)
             }
 
-            if isLive && message.content.isEmpty && !isGeneratingImage {
+            if isLive && message.content.isEmpty {
                 TypingIndicator()
             }
 
@@ -302,28 +297,6 @@ private struct TypingIndicator: View {
             .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
             .onAppear { pulse = true }
             .padding(.vertical, 6)
-    }
-}
-
-private struct ImagePlaceholderView: View {
-    @State private var pulse = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(Color.primary.opacity(pulse ? 0.09 : 0.04))
-            .frame(width: 340, height: 340)
-            .overlay {
-                VStack(spacing: 10) {
-                    Image(systemName: "photo")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.tertiary)
-                    Text("Creando imagen…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: pulse)
-            .onAppear { pulse = true }
     }
 }
 

@@ -6,7 +6,6 @@ import Observation
 struct LiveTurn {
     var conversationID: UUID
     var message: ChatMessage
-    var isGeneratingImage = false
 }
 
 @MainActor
@@ -18,8 +17,6 @@ final class ChatStore {
 
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private var task: Task<Void, Never>?
-
-    private static let maxToolRounds = 5
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -253,43 +250,23 @@ final class ChatStore {
 
         do {
             let client = try settings.makeClient()
-            let useTools = settings.imageGenerationEnabled
-
-            for _ in 0..<Self.maxToolRounds {
+            if settings.imageGenerationEnabled {
+                // The built-in image tool only exists in the Responses API; it runs on the server.
+                let body = try requestBody(for: conversationID, format: .responses)
+                let items = try await client.createResponse(body: body, log: log)
                 try Task.checkCancellation()
-                let body = try requestBody(for: conversationID, inProgress: message, useTools: useTools)
-                var calls = ToolCallAccumulator()
-
+                apply(items, to: &message)
+            } else {
+                let body = try requestBody(for: conversationID, format: .chatCompletions)
                 for try await event in client.streamChat(body: body, log: log) {
                     switch event {
                     case .content(let delta):
                         message.content += delta
-                    case .toolCall(let index, let id, let name, let arguments):
-                        calls.apply(index: index, id: id, name: name, arguments: arguments)
                     case .image(let url):
                         if let data = try? await OpenAIClient.downloadImage(url),
                            let stored = try? ImageStore.save(data, prompt: nil) {
                             message.images.append(stored)
                         }
-                    }
-                    live?.message = message
-                }
-                if Task.isCancelled || calls.isEmpty { break }
-
-                // The model asked for tools: record the round, run them and loop.
-                message.toolRounds.append(ToolRound(content: message.content, calls: calls.records()))
-                message.content = ""
-                live?.message = message
-
-                let round = message.toolRounds.count - 1
-                for index in message.toolRounds[round].calls.indices {
-                    let call = message.toolRounds[round].calls[index]
-                    let result = await executeTool(
-                        call, client: client, conversationID: conversationID, current: message, log: log)
-                    message.toolRounds[round].calls[index].output = result.output
-                    if let image = result.image {
-                        message.images.append(image)
-                        message.toolRounds[round].calls[index].imageIDs = [image.id]
                     }
                     live?.message = message
                 }
@@ -302,19 +279,52 @@ final class ChatStore {
 
         message.rawExchanges = log.exchanges
 
-        // Every tool call needs a result, or the next request will be rejected.
-        for round in message.toolRounds.indices {
-            for call in message.toolRounds[round].calls.indices where message.toolRounds[round].calls[call].output.isEmpty {
-                message.toolRounds[round].calls[call].output = "Cancelled by the user."
-            }
-        }
-
         live = nil
         task = nil
         if !message.fullText.isEmpty || !message.images.isEmpty || message.errorText != nil {
             mutate(conversationID) { $0.messages.append(message) }
         }
         await generateTitleIfNeeded(conversationID)
+    }
+
+    /// Stores a Responses API reply. Each image call becomes a tool round holding the text
+    /// written before it, so the images show up in the order the model produced them.
+    private func apply(_ items: [ResponseItem], to message: inout ChatMessage) {
+        var failedImages = 0
+        for item in items {
+            switch item {
+            case .text(let text):
+                message.content += message.content.isEmpty ? text : "\n\n" + text
+            case .image(let id, let status, let data, let revisedPrompt, let size):
+                var call = ToolCallRecord(
+                    id: id, name: "image_generation",
+                    arguments: Self.imageCallArguments(revisedPrompt: revisedPrompt, size: size),
+                    output: status)
+                if let data, let stored = try? ImageStore.save(data, prompt: revisedPrompt) {
+                    message.images.append(stored)
+                    call.imageIDs = [stored.id]
+                } else {
+                    failedImages += 1
+                }
+                if message.content.isEmpty, let last = message.toolRounds.indices.last {
+                    message.toolRounds[last].calls.append(call)
+                } else {
+                    message.toolRounds.append(ToolRound(content: message.content, calls: [call]))
+                    message.content = ""
+                }
+            }
+        }
+        if failedImages > 0 {
+            message.errorText = "No se pudo generar la imagen."
+        }
+    }
+
+    private static func imageCallArguments(revisedPrompt: String?, size: String?) -> String {
+        var arguments: [String: String] = [:]
+        arguments["revised_prompt"] = revisedPrompt
+        arguments["size"] = size
+        guard let data = try? JSONSerialization.data(withJSONObject: arguments, options: .sortedKeys) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func isCancellation(_ error: Error) -> Bool {
@@ -325,57 +335,85 @@ final class ChatStore {
 
     // MARK: Request building
 
-    private func requestBody(for conversationID: UUID, inProgress: ChatMessage, useTools: Bool) throws -> Data {
+    private enum WireFormat {
+        case chatCompletions, responses
+
+        func textPart(_ text: String) -> [String: Any] {
+            switch self {
+            case .chatCompletions: ["type": "text", "text": text]
+            case .responses: ["type": "input_text", "text": text]
+            }
+        }
+
+        func imagePart(_ url: String) -> [String: Any] {
+            switch self {
+            case .chatCompletions: ["type": "image_url", "image_url": ["url": url]]
+            case .responses: ["type": "input_image", "image_url": url]
+            }
+        }
+    }
+
+    private func requestBody(for conversationID: UUID, format: WireFormat) throws -> Data {
         guard let conversation = conversation(conversationID) else { throw CancellationError() }
         let model = settings.chatModel.trimmed
         guard !model.isEmpty else {
             throw APIError.http(status: 0, message: "No hay un modelo configurado. Elige uno en Configuración.")
         }
 
+        let useTools = format == .responses
         var messages: [[String: Any]] = [["role": "system", "content": systemPrompt(useTools: useTools)]]
         var pendingImages: [StoredImage] = []
 
-        for message in conversation.messages + [inProgress] {
+        for message in conversation.messages {
             switch message.role {
             case .user:
                 var parts: [[String: Any]] = []
-                // Chat completions don't allow images in assistant messages, so images the
-                // assistant produced travel with the next user message as vision input.
+                // Neither API accepts images in assistant messages, so images the assistant
+                // produced travel with the next user message as vision input. That is also
+                // what lets the image tool edit them.
                 let generatedURLs = settings.sendImagesAsContext
                     ? pendingImages.compactMap { ImageStore.contextDataURL(for: $0) }
                     : []
                 pendingImages.removeAll()
                 if !generatedURLs.isEmpty {
-                    parts.append([
-                        "type": "text",
-                        "text": "[Images you (the assistant) generated earlier in this conversation, attached for context]",
-                    ])
-                    parts += generatedURLs.map { ["type": "image_url", "image_url": ["url": $0]] }
+                    parts.append(format.textPart(
+                        "[Images you (the assistant) generated earlier in this conversation, attached for context]"))
+                    parts += generatedURLs.map(format.imagePart)
                 }
                 for image in message.images {
                     guard let url = ImageStore.contextDataURL(for: image, maxPixelSize: 2048) else { continue }
                     // The label right before the image is what ties its title to it.
                     if let title = image.title {
-                        parts.append(["type": "text", "text": Self.imageLabel(title)])
+                        parts.append(format.textPart(Self.imageLabel(title)))
                     }
-                    parts.append(["type": "image_url", "image_url": ["url": url]])
+                    parts.append(format.imagePart(url))
                 }
 
                 let text = userText(for: message)
                 if parts.isEmpty {
                     messages.append(["role": "user", "content": text])
                 } else {
-                    if !text.isEmpty { parts.append(["type": "text", "text": text]) }
+                    if !text.isEmpty { parts.append(format.textPart(text)) }
                     messages.append(["role": "user", "content": parts])
                 }
             case .assistant:
-                messages += apiMessages(forAssistant: message, useTools: useTools)
+                let text = assistantText(for: message)
+                if !text.trimmed.isEmpty { messages.append(["role": "assistant", "content": text]) }
                 pendingImages += message.images
             }
         }
 
-        var body: [String: Any] = ["model": model, "messages": messages, "stream": false]
-        if useTools { body["tools"] = [Self.imageTool] }
+        var body: [String: Any] = ["model": model, "stream": false]
+        switch format {
+        case .chatCompletions:
+            body["messages"] = messages
+        case .responses:
+            body["input"] = messages
+            var tool: [String: Any] = ["type": "image_generation"]
+            let imageModel = settings.imageModel.trimmed
+            if !imageModel.isEmpty { tool["model"] = imageModel }
+            body["tools"] = [tool]
+        }
         return try JSONSerialization.data(withJSONObject: body)
     }
 
@@ -392,34 +430,14 @@ final class ChatStore {
         "[Image titled \"\(title)\"]"
     }
 
-    private func apiMessages(forAssistant message: ChatMessage, useTools: Bool) -> [[String: Any]] {
-        var result: [[String: Any]] = []
-        if useTools {
-            for round in message.toolRounds {
-                result.append([
-                    "role": "assistant",
-                    "content": round.content.isEmpty ? NSNull() : round.content,
-                    "tool_calls": round.calls.map {
-                        ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.arguments]]
-                    },
-                ])
-                for call in round.calls {
-                    result.append(["role": "tool", "tool_call_id": call.id, "content": call.output])
-                }
-            }
-            if !message.content.isEmpty {
-                result.append(["role": "assistant", "content": message.content])
-            }
-        } else {
-            // Tools are off: flatten earlier tool usage into plain text.
-            var text = message.fullText
-            let prompts = message.images.compactMap(\.prompt)
-            if !prompts.isEmpty {
-                text += "\n\n" + prompts.map { "[Generated image: \($0)]" }.joined(separator: "\n")
-            }
-            if !text.trimmed.isEmpty { result.append(["role": "assistant", "content": text]) }
+    /// The assistant's reply as plain text, noting the images it generated.
+    private func assistantText(for message: ChatMessage) -> String {
+        var text = message.fullText
+        let prompts = message.images.compactMap(\.prompt)
+        if !prompts.isEmpty {
+            text += "\n\n" + prompts.map { "[Generated image: \($0)]" }.joined(separator: "\n")
         }
-        return result
+        return text
     }
 
     private func systemPrompt(useTools: Bool) -> String {
@@ -435,12 +453,11 @@ final class ChatStore {
             prompt += """
 
 
-            You can create images with the `generate_image` tool. Call it whenever the user asks you to create, draw, \
-            design, illustrate or modify an image, writing a detailed prompt. To change the most recent image in the \
-            conversation (one you generated or one the user attached), set `edit_previous_image` to true and describe \
-            the full desired result; if the user names a titled image instead, also pass its title as `image_title`. \
-            Generated images are shown to the \
-            user automatically: never include links or Markdown images for them, just add a brief comment.
+            You can create and edit images with your image generation tool. Use it whenever the user asks you to \
+            create, draw, design, illustrate or modify an image. Earlier images in the conversation (generated by you \
+            or attached by the user) are included in the user's messages, so you can edit them; when the user names \
+            a titled image, edit that one. Generated images are shown to the user automatically: never include links \
+            or Markdown images for them, just add a brief comment.
             """
         }
         let custom = settings.customInstructions.trimmed
@@ -448,113 +465,6 @@ final class ChatStore {
             prompt += "\n\nCustom instructions from the user:\n\(custom)"
         }
         return prompt
-    }
-
-    private static var imageTool: [String: Any] {
-        [
-            "type": "function",
-            "function": [
-                "name": "generate_image",
-                "description": "Generates an image from a text description and shows it to the user. Use it when the user asks for an image, drawing, illustration, logo, photo, etc., or wants to modify a previous image (generated or attached by the user).",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "prompt": [
-                            "type": "string",
-                            "description": "Detailed description of the image to generate (subject, style, composition, colors, lighting).",
-                        ],
-                        "orientation": [
-                            "type": "string",
-                            "enum": ["square", "landscape", "portrait"],
-                            "description": "Image aspect. Defaults to square.",
-                        ],
-                        "edit_previous_image": [
-                            "type": "boolean",
-                            "description": "true to modify an existing image in this conversation (generated or attached by the user) instead of creating a new one from scratch. Defaults to the most recent image.",
-                        ],
-                        "image_title": [
-                            "type": "string",
-                            "description": "With edit_previous_image: the title of the attached image to modify, when the user refers to one by its title.",
-                        ],
-                    ],
-                    "required": ["prompt"],
-                ] as [String: Any],
-            ] as [String: Any],
-        ]
-    }
-
-    // MARK: Tools
-
-    private func executeTool(
-        _ call: ToolCallRecord, client: OpenAIClient, conversationID: UUID, current: ChatMessage, log: RawLog
-    ) async -> (output: String, image: StoredImage?) {
-        guard call.name == "generate_image" else {
-            return ("Error: unknown tool '\(call.name)'.", nil)
-        }
-        let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any] ?? [:]
-        guard let prompt = (arguments["prompt"] as? String)?.trimmed, !prompt.isEmpty else {
-            return ("Error: the 'prompt' argument is required.", nil)
-        }
-        let model = settings.imageModel.trimmed
-        guard !model.isEmpty else {
-            return ("Error: no image model is configured. Tell the user to set one in Settings.", nil)
-        }
-        let size = Self.imageSize(orientation: arguments["orientation"] as? String, model: model)
-        let wantsEdit = arguments["edit_previous_image"] as? Bool ?? false
-        let sourceTitle = arguments["image_title"] as? String
-
-        live?.isGeneratingImage = true
-        defer { live?.isGeneratingImage = false }
-
-        do {
-            var data: Data?
-            if wantsEdit, let previous = sourceImage(titled: sourceTitle, in: conversationID, current: current),
-               let original = try? Data(contentsOf: ImageStore.fileURL(for: previous)) {
-                // Not every provider supports edits; fall back to a fresh generation.
-                data = try? await client.editImage(
-                    model: model, prompt: prompt, image: original, filename: previous.filename,
-                    mimeType: ImageStore.mimeType(for: previous), size: size, log: log)
-            }
-            try Task.checkCancellation()
-            let imageData: Data
-            if let data {
-                imageData = data
-            } else {
-                imageData = try await client.generateImage(model: model, prompt: prompt, size: size, log: log)
-            }
-            let stored = try ImageStore.save(imageData, prompt: prompt)
-            return ("The image was generated successfully and is already displayed to the user. Prompt used: \"\(prompt)\".", stored)
-        } catch {
-            if Self.isCancellation(error) { return ("Cancelled by the user.", nil) }
-            return ("Error: the image could not be generated (\(error.localizedDescription)). Briefly tell the user.", nil)
-        }
-    }
-
-    /// The most recent image with the given title, or the most recent image of all
-    /// when there's no title or nothing matches it.
-    private func sourceImage(titled title: String?, in conversationID: UUID, current: ChatMessage) -> StoredImage? {
-        let images = ((conversation(conversationID)?.messages ?? []) + [current]).flatMap(\.images)
-        let wanted = title?.trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”«»").union(.whitespaces)) ?? ""
-        if !wanted.isEmpty, let match = images.last(where: { image in
-            image.title?.compare(wanted, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-        }) {
-            return match
-        }
-        return images.last
-    }
-
-    private static func imageSize(orientation: String?, model: String) -> String? {
-        let model = model.lowercased()
-        let isDallE3 = model.contains("dall-e-3")
-        let isGPTImage = model.hasPrefix("gpt-image")
-        guard isDallE3 || isGPTImage || model.contains("dall-e-2") else { return nil }
-        switch orientation {
-        case "landscape" where isDallE3: return "1792x1024"
-        case "landscape" where isGPTImage: return "1536x1024"
-        case "portrait" where isDallE3: return "1024x1792"
-        case "portrait" where isGPTImage: return "1024x1536"
-        default: return "1024x1024"
-        }
     }
 
     // MARK: Titles
@@ -595,47 +505,5 @@ final class ChatStore {
         let untitled = message.images.count - titled.count
         if untitled > 0 { names.append("[\(untitled) attached image(s)]") }
         return (names + [message.content]).filter { !$0.isEmpty }.joined(separator: "\n")
-    }
-}
-
-/// Assembles streamed tool-call fragments into complete calls.
-private struct ToolCallAccumulator {
-    private struct Partial {
-        var id: String?
-        var name = ""
-        var arguments = ""
-    }
-    private var calls: [Partial] = []
-
-    var isEmpty: Bool { calls.isEmpty }
-
-    mutating func apply(index: Int?, id: String?, name: String?, arguments: String?) {
-        let position: Int
-        if let index {
-            while calls.count <= index { calls.append(Partial()) }
-            position = index
-        } else if let id, !id.isEmpty {
-            if let existing = calls.firstIndex(where: { $0.id == id }) {
-                position = existing
-            } else {
-                calls.append(Partial())
-                position = calls.count - 1
-            }
-        } else {
-            if calls.isEmpty { calls.append(Partial()) }
-            position = calls.count - 1
-        }
-        if let id, !id.isEmpty { calls[position].id = id }
-        if let name, !name.isEmpty, calls[position].name.isEmpty { calls[position].name = name }
-        if let arguments { calls[position].arguments += arguments }
-    }
-
-    func records() -> [ToolCallRecord] {
-        calls.map { partial in
-            ToolCallRecord(
-                id: partial.id ?? "call_\(UUID().uuidString.prefix(12))",
-                name: partial.name,
-                arguments: partial.arguments.trimmed.isEmpty ? "{}" : partial.arguments)
-        }
     }
 }

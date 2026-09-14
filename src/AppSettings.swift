@@ -64,13 +64,13 @@ final class AppSettings {
     }
 
     /// Accepts things like `api.openai.com`, `https://host/v1/` or a full
-    /// `.../chat/completions` URL and returns the API base (e.g. `https://host/v1`).
+    /// `.../chat/completions` or `.../responses` URL and returns the API base (e.g. `https://host/v1`).
     static func normalizedBaseURL(_ raw: String) -> URL? {
         var string = raw.trimmed
         guard !string.isEmpty else { return nil }
         if !string.contains("://") { string = "https://" + string }
         while string.hasSuffix("/") { string.removeLast() }
-        for suffix in ["/chat/completions", "/completions", "/models"] where string.hasSuffix(suffix) {
+        for suffix in ["/chat/completions", "/completions", "/responses", "/models"] where string.hasSuffix(suffix) {
             string.removeLast(suffix.count)
         }
         guard var components = URLComponents(string: string), components.host != nil else { return nil }
@@ -128,7 +128,7 @@ enum ModelFilter {
     }
 
     static func suggestedImageModel(from models: [String]) -> String? {
+        // The image_generation tool only accepts gpt-image models.
         models.first { $0.lowercased().hasPrefix("gpt-image") }
-            ?? models.first { $0.lowercased().contains("dall-e-3") }
     }
 }

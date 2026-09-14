@@ -50,7 +50,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Imágenes")
                 } footer: {
-                    Text("El modelo de chat decide cuándo crear una imagen usando la herramienta generate_image, que llama a /images/generations. Desactiva la generación si tu proveedor no soporta herramientas.")
+                    Text("El modelo de chat crea y edita imágenes con la herramienta nativa image_generation de la Responses API (/responses), que por ahora solo ofrece OpenAI. Desactívala si usas otro proveedor.")
                         .foregroundStyle(.secondary)
                 }
 

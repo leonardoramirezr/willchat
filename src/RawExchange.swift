@@ -134,10 +134,14 @@ enum RawFormat {
         return String(text.prefix(limit)) + "\n…[\(text.count - limit) caracteres omitidos]"
     }
 
-    /// Shortens base64 payloads (image data URLs, `b64_json`) so a conversation
-    /// doesn't store megabytes of pixels twice.
+    /// Shortens base64 payloads (image data URLs, `b64_json`, an image call's `result`)
+    /// so a conversation doesn't store megabytes of pixels twice.
     static func redactBase64(_ text: String) -> String {
-        shortenPayloads(in: shortenPayloads(in: text, after: ";base64,"), after: "\"b64_json\"", quoted: true)
+        var text = shortenPayloads(in: text, after: ";base64,")
+        for key in ["\"b64_json\"", "\"result\""] {
+            text = shortenPayloads(in: text, after: key, quoted: true)
+        }
+        return text
     }
 
     private static func shortenPayloads(in text: String, after marker: String, quoted: Bool = false) -> String {

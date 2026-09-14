@@ -363,7 +363,7 @@ private struct MessagesView: View {
                             onFork: message.role == .user ? { onFork(message.id) } : nil)
                     }
                     if let live {
-                        MessageRow(message: live.message, isLive: true, isGeneratingImage: live.isGeneratingImage)
+                        MessageRow(message: live.message, isLive: true)
                     }
                     Color.clear
                         .frame(height: 1)
@@ -392,9 +392,6 @@ private struct MessagesView: View {
                 withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: live?.message) {
-                if isNearBottom { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onChange(of: live?.isGeneratingImage) {
                 if isNearBottom { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }

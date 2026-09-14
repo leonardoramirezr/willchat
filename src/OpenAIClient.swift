@@ -25,12 +25,18 @@ enum APIError: LocalizedError {
 
 enum StreamEvent: Sendable {
     case content(String)
-    case toolCall(index: Int?, id: String?, name: String?, arguments: String?)
     /// An image returned inline by the model (data: URL or http URL).
     case image(String)
 }
 
-/// Minimal client for OpenAI-compatible APIs (`/models`, `/chat/completions`, `/images/*`).
+/// One output item of a Responses API reply, in the order the model produced them.
+enum ResponseItem: Sendable {
+    case text(String)
+    /// A call to the built-in `image_generation` tool; `image` is nil when it failed.
+    case image(id: String, status: String, image: Data?, revisedPrompt: String?, size: String?)
+}
+
+/// Minimal client for OpenAI-compatible APIs (`/models`, `/chat/completions`, `/responses`).
 struct OpenAIClient: Sendable {
     let baseURL: URL
     let apiKey: String
@@ -184,13 +190,6 @@ struct OpenAIClient: Sendable {
         for choice in chunk.choices ?? [] {
             guard let delta = choice.delta ?? choice.message else { continue }
             if let text = delta.text, !text.isEmpty { continuation.yield(.content(text)) }
-            for (position, call) in delta.toolCalls.enumerated() {
-                continuation.yield(.toolCall(
-                    index: call.index ?? (delta.toolCalls.count > 1 ? position : nil),
-                    id: call.id,
-                    name: call.function?.name,
-                    arguments: call.function?.arguments))
-            }
             for url in delta.imageURLs { continuation.yield(.image(url)) }
         }
     }
@@ -202,61 +201,36 @@ struct OpenAIClient: Sendable {
         return chunk.choices?.first?.message?.text ?? ""
     }
 
-    // MARK: Images
+    // MARK: Responses
 
-    private static func sendsResponseFormat(_ model: String) -> Bool {
-        // gpt-image models always return base64 and reject `response_format`.
-        !model.lowercased().hasPrefix("gpt-image")
-    }
-
-    func generateImage(model: String, prompt: String, size: String?, log: RawLog? = nil) async throws -> Data {
-        var body: [String: Any] = ["model": model, "prompt": prompt, "n": 1]
-        if let size { body["size"] = size }
-        if Self.sendsResponseFormat(model) { body["response_format"] = "b64_json" }
-        let request = makeRequest(
-            "images/generations", method: "POST",
-            body: try JSONSerialization.data(withJSONObject: body), timeout: 300)
-        return try await Self.imageData(from: try await perform(request, log: log))
-    }
-
-    func editImage(
-        model: String, prompt: String, image: Data, filename: String, mimeType: String,
-        size: String?, log: RawLog? = nil
-    ) async throws -> Data {
-        let boundary = "WillChat-\(UUID().uuidString)"
-        var body = Data()
-        func field(_ name: String, _ value: String) {
-            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+    /// Non-streaming call to the Responses API, which runs hosted tools such as
+    /// `image_generation` on the server and returns their results with the reply.
+    func createResponse(body: Data, log: RawLog? = nil) async throws -> [ResponseItem] {
+        let data = try await perform(makeRequest("responses", method: "POST", body: body, timeout: 600), log: log)
+        guard let response = try? JSONDecoder().decode(ResponseBody.self, from: data) else {
+            throw APIError.invalidResponse("No se pudo leer la respuesta de /responses.")
         }
-        field("model", model)
-        field("prompt", prompt)
-        field("n", "1")
-        if let size { field("size", size) }
-        if Self.sendsResponseFormat(model) { field("response_format", "b64_json") }
-        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"image\"; filename=\"\(filename)\"\r\nContent-Type: \(mimeType)\r\n\r\n".utf8))
-        body.append(image)
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-
-        let request = makeRequest(
-            "images/edits", method: "POST", body: body,
-            contentType: "multipart/form-data; boundary=\(boundary)", timeout: 300)
-        return try await Self.imageData(from: try await perform(request, log: log))
-    }
-
-    private static func imageData(from data: Data) async throws -> Data {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = object["data"] as? [[String: Any]],
-              let first = items.first
-        else { throw APIError.invalidResponse("La API de imágenes no devolvió ninguna imagen.") }
-
-        if let b64 = first["b64_json"] as? String,
-           let decoded = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) {
-            return decoded
+        if let message = response.error?.message {
+            throw APIError.http(status: 0, message: message)
         }
-        if let urlString = first["url"] as? String, let decoded = try await downloadImage(urlString) {
-            return decoded
+        let items: [ResponseItem] = (response.output ?? []).compactMap { item in
+            switch item.type {
+            case "message":
+                let text = (item.content ?? []).compactMap { $0.text ?? $0.refusal }.joined()
+                return text.isEmpty ? nil : .text(text)
+            case "image_generation_call":
+                let image = item.result.flatMap { Data(base64Encoded: $0, options: .ignoreUnknownCharacters) }
+                return .image(
+                    id: item.id ?? "ig_\(UUID().uuidString.prefix(12))", status: item.status ?? "unknown",
+                    image: image, revisedPrompt: item.revised_prompt, size: item.size)
+            default:
+                return nil
+            }
         }
-        throw APIError.invalidResponse("Formato de imagen no soportado.")
+        if items.isEmpty, let reason = response.incomplete_details?.reason {
+            throw APIError.invalidResponse("La respuesta quedó incompleta (\(reason)).")
+        }
+        return items
     }
 
     /// Resolves a `data:` URL or downloads an http(s) image URL.
@@ -272,6 +246,31 @@ struct OpenAIClient: Sendable {
 }
 
 // MARK: - Wire format
+
+private struct ResponseBody: Decodable {
+    struct Item: Decodable {
+        struct Content: Decodable {
+            let text: String?
+            let refusal: String?
+        }
+        let type: String
+        let id: String?
+        let status: String?
+        let content: [Content]?
+        let result: String?
+        let revised_prompt: String?
+        let size: String?
+    }
+    struct ErrorBody: Decodable {
+        let message: String?
+    }
+    struct IncompleteDetails: Decodable {
+        let reason: String?
+    }
+    let output: [Item]?
+    let error: ErrorBody?
+    let incomplete_details: IncompleteDetails?
+}
 
 private struct ChatChunk: Decodable {
     struct Choice: Decodable {
@@ -293,22 +292,12 @@ private struct Delta: Decodable {
         let text: String?
         let image_url: ImageURL?
     }
-    struct ToolCallDelta: Decodable {
-        struct Function: Decodable {
-            let name: String?
-            let arguments: String?
-        }
-        let index: Int?
-        let id: String?
-        let function: Function?
-    }
 
     var text: String?
-    var toolCalls: [ToolCallDelta] = []
     var imageURLs: [String] = []
 
     private enum CodingKeys: String, CodingKey {
-        case content, tool_calls, images
+        case content, images
     }
 
     init(from decoder: Decoder) throws {
@@ -319,7 +308,6 @@ private struct Delta: Decodable {
             text = parts.filter { $0.type == nil || $0.type == "text" }.compactMap(\.text).joined()
             imageURLs += parts.compactMap { $0.image_url?.url }
         }
-        toolCalls = (try? container.decode([ToolCallDelta].self, forKey: .tool_calls)) ?? []
         if let images = try? container.decode([ContentPart].self, forKey: .images) {
             imageURLs += images.compactMap { $0.image_url?.url }
         }

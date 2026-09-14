@@ -46,14 +46,6 @@ enum ImageStore {
         }
     }
 
-    static func mimeType(for image: StoredImage) -> String {
-        switch (image.filename as NSString).pathExtension.lowercased() {
-        case "jpg", "jpeg": return "image/jpeg"
-        case "webp": return "image/webp"
-        default: return "image/png"
-        }
-    }
-
     /// A downscaled JPEG `data:` URL used to send the image back to the model as context.
     static func contextDataURL(for image: StoredImage, maxPixelSize: Int = 1024) -> String? {
         if let cached = contextCache[image.id] { return cached }

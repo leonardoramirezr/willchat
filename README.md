@@ -17,8 +17,8 @@ make install   # copies the app to /Applications
 - Sidebar with new chat (⌘N), search (⌘K), history (⌃⌘S), and settings (⌘,).
 - Streaming responses with Markdown (code, lists, tables).
 - Regenerate the response to any of your messages (↻ button next to "Copy") using the text and image models currently selected.
-- Image generation: the model decides when to call the `generate_image` tool, which uses `/images/generations` (or `/images/edits` to modify the previous image). Generated images are sent back to the model as context (vision) in subsequent messages.
-- Attachments: "+" button (⌘U), drag and drop, or paste (⌘V). Images are sent as vision; text is extracted from PDF, Word/RTF/ODT, and text or code files and included in the message. Attached images can also be modified with `generate_image`. Each attached image can be given a title in the composer, so you can refer to it by name in your message (e.g. "compare «before» with «after»" or "change the background of «logo»").
+- Image generation: with it enabled, replies go through the Responses API (`/responses`) with OpenAI's built-in `image_generation` tool, so the chat model decides when to create or edit an image. Generated images are sent back to the model as context (vision) in subsequent messages, which is what lets it edit them. With it disabled, replies use `/chat/completions`, which works with any OpenAI-compatible provider.
+- Attachments: "+" button (⌘U), drag and drop, or paste (⌘V). Images are sent as vision; text is extracted from PDF, Word/RTF/ODT, and text or code files and included in the message. Attached images can also be edited with the image generation tool. Each attached image can be given a title in the composer, so you can refer to it by name in your message (e.g. "compare «before» with «after»" or "change the background of «logo»").
 - Chats, images, and attachments are saved in `~/Library/Application Support/WillChat`; the API key is stored in the Keychain.
 
 If your provider doesn't support *tool calling* or vision, disable those options in Settings.
