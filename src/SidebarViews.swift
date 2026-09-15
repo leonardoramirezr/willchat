@@ -64,6 +64,9 @@ struct SidebarRail: View {
 
             Spacer()
 
+            RailButton(systemImage: "chart.bar.xaxis", help: "Consumo de tokens y gasto (⇧⌘U)", isActive: ui.showUsage) {
+                ui.showUsage = true
+            }
             RailButton(systemImage: "gearshape", help: "Configuración (⌘,)", isActive: ui.showSettings) {
                 ui.showSettings = true
             }

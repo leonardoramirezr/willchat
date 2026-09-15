@@ -16,10 +16,12 @@ final class ChatStore {
     private(set) var live: LiveTurn?
 
     @ObservationIgnored private let settings: AppSettings
+    @ObservationIgnored private let usage: UsageStore
     @ObservationIgnored private var task: Task<Void, Never>?
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, usage: UsageStore) {
         self.settings = settings
+        self.usage = usage
         conversations = Persistence.loadConversations().sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -247,15 +249,19 @@ final class ChatStore {
     private func runTurn(conversationID: UUID) async {
         guard var message = live?.message else { return }
         let log = RawLog()
+        let chatModel = settings.chatModel
+        let imageModel = settings.imageModel
+        var streamUsage: ReportedUsage?
 
         do {
             let client = try settings.makeClient()
             if settings.imageGenerationEnabled {
                 // The built-in image tool only exists in the Responses API; it runs on the server.
                 let body = try requestBody(for: conversationID, format: .responses)
-                let items = try await client.createResponse(body: body, log: log)
+                let reply = try await client.createResponse(body: body, log: log)
+                usage.record(reply.usage, chatModel: chatModel, imageModel: imageModel)
                 try Task.checkCancellation()
-                apply(items, to: &message)
+                apply(reply.items, to: &message)
             } else {
                 let body = try requestBody(for: conversationID, format: .chatCompletions)
                 for try await event in client.streamChat(body: body, log: log) {
@@ -267,6 +273,8 @@ final class ChatStore {
                            let stored = try? ImageStore.save(data, prompt: nil) {
                             message.images.append(stored)
                         }
+                    case .usage(let reported):
+                        streamUsage = reported
                     }
                     live?.message = message
                 }
@@ -277,6 +285,9 @@ final class ChatStore {
             }
         }
 
+        if let streamUsage {
+            usage.record(streamUsage, chatModel: chatModel, imageModel: imageModel)
+        }
         message.rawExchanges = log.exchanges
 
         live = nil
@@ -485,12 +496,14 @@ final class ChatStore {
             ["role": "system", "content": "You write short titles for chat conversations. Reply with only the title: 2 to 6 words, in the same language as the user, no quotes, no final punctuation."],
             ["role": "user", "content": "User: \(Self.titleSource(for: question).prefix(1500))\n\nAssistant: \(answer.fullText.prefix(1500))"],
         ]
-        let payload: [String: Any] = ["model": settings.chatModel, "messages": messages, "stream": false]
+        let model = settings.chatModel
+        let payload: [String: Any] = ["model": model, "messages": messages, "stream": false]
         guard let body = try? JSONSerialization.data(withJSONObject: payload),
-              let raw = try? await client.complete(body: body)
+              let reply = try? await client.complete(body: body)
         else { return }
+        usage.record(reply.usage, chatModel: model, imageModel: nil)
 
-        var title = raw
+        var title = reply.text
         if let thinkEnd = title.range(of: "</think>") { title = String(title[thinkEnd.upperBound...]) }
         title = title.trimmed.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”«»*#.").union(.whitespaces))

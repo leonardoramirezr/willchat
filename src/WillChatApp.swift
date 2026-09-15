@@ -5,13 +5,18 @@ struct WillChatApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var settings: AppSettings
     @State private var store: ChatStore
+    @State private var usage: UsageStore
     @State private var ui = UIState()
 
     init() {
         Persistence.ensureDirectories()
         let settings = AppSettings()
+        let usage = UsageStore()
+        let store = ChatStore(settings: settings, usage: usage)
+        usage.importHistoryIfNeeded(from: store.conversations)
         _settings = State(initialValue: settings)
-        _store = State(initialValue: ChatStore(settings: settings))
+        _store = State(initialValue: store)
+        _usage = State(initialValue: usage)
     }
 
     var body: some Scene {
@@ -19,6 +24,7 @@ struct WillChatApp: App {
             RootView()
                 .environment(settings)
                 .environment(store)
+                .environment(usage)
                 .environment(ui)
                 .frame(minWidth: 760, minHeight: 520)
         }
@@ -46,6 +52,9 @@ struct WillChatApp: App {
                     ui.historyVisible.toggle()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
+                Button("Consumo…") { ui.showUsage = true }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .disabled(!settings.hasCompletedOnboarding)
                 Divider()
                 Button("Adjuntar archivos…") { ui.requestAttachFiles() }
                     .keyboardShortcut("u")
@@ -70,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @Observable
 final class UIState {
     var showSettings = false
+    var showUsage = false
     var showSearch = false
     var historyVisible: Bool = UserDefaults.standard.object(forKey: "historyVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(historyVisible, forKey: "historyVisible") }
@@ -140,6 +150,9 @@ struct MainView: View {
         .animation(.easeOut(duration: 0.15), value: ui.showSearch)
         .sheet(isPresented: $ui.showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $ui.showUsage) {
+            UsageView()
         }
     }
 }

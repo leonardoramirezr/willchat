@@ -27,6 +27,30 @@ enum StreamEvent: Sendable {
     case content(String)
     /// An image returned inline by the model (data: URL or http URL).
     case image(String)
+    /// Tokens used so far; a later report for the same request replaces an earlier one.
+    case usage(ReportedUsage)
+}
+
+/// Money spent on one UTC day, as a provider's billing API reports it.
+struct DailyCost: Sendable {
+    /// Start of the UTC day.
+    let day: Date
+    let amount: Double
+    let currency: String
+    let lineItem: String?
+}
+
+/// Credits (USD) spent through OpenRouter. Day, week and month are UTC periods.
+struct OpenRouterSpend: Sendable {
+    var today: Double?
+    var thisWeek: Double?
+    var thisMonth: Double?
+    var total: Double?
+    /// The key's spending limit; nil when it has none.
+    var limit: Double?
+    var limitRemaining: Double?
+    /// Credits bought minus credits used; nil when the key can't read the account's credits.
+    var balance: Double?
 }
 
 /// One output item of a Responses API reply, in the order the model produced them.
@@ -46,11 +70,14 @@ struct OpenAIClient: Sendable {
     private func makeRequest(
         _ path: String,
         method: String = "GET",
+        query: [URLQueryItem] = [],
         body: Data? = nil,
         contentType: String = "application/json",
         timeout: TimeInterval = 60
     ) -> URLRequest {
-        var request = URLRequest(url: baseURL.appending(path: path))
+        var url = baseURL.appending(path: path)
+        if !query.isEmpty { url.append(queryItems: query) }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = timeout
         if !apiKey.isEmpty {
@@ -151,6 +178,7 @@ struct OpenAIClient: Sendable {
                         record.setResponseBody(data)
                         commit()
                         let chunk = try JSONDecoder().decode(ChatChunk.self, from: data)
+                        Self.emitUsage(in: data, to: continuation)
                         try Self.emit(chunk, to: continuation)
                         continuation.finish()
                         return
@@ -166,6 +194,8 @@ struct OpenAIClient: Sendable {
                         guard let data = payload.data(using: .utf8),
                               let chunk = try? JSONDecoder().decode(ChatChunk.self, from: data)
                         else { continue }
+                        // Servers that stream usually report usage in the last chunk.
+                        Self.emitUsage(in: data, to: continuation)
                         try Self.emit(chunk, to: continuation)
                     }
                     record.setResponseBody(transcript)
@@ -194,18 +224,23 @@ struct OpenAIClient: Sendable {
         }
     }
 
-    /// Non-streaming completion that returns only the text (used for titles).
-    func complete(body: Data) async throws -> String {
+    private static func emitUsage(in data: Data, to continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation) {
+        let usage = ReportedUsage(parsing: data)
+        if usage.reply != nil { continuation.yield(.usage(usage)) }
+    }
+
+    /// Non-streaming completion that returns only the text (used for titles) and its usage.
+    func complete(body: Data) async throws -> (text: String, usage: ReportedUsage) {
         let data = try await perform(makeRequest("chat/completions", method: "POST", body: body, timeout: 120))
         let chunk = try JSONDecoder().decode(ChatChunk.self, from: data)
-        return chunk.choices?.first?.message?.text ?? ""
+        return (chunk.choices?.first?.message?.text ?? "", ReportedUsage(parsing: data))
     }
 
     // MARK: Responses
 
     /// Non-streaming call to the Responses API, which runs hosted tools such as
     /// `image_generation` on the server and returns their results with the reply.
-    func createResponse(body: Data, log: RawLog? = nil) async throws -> [ResponseItem] {
+    func createResponse(body: Data, log: RawLog? = nil) async throws -> (items: [ResponseItem], usage: ReportedUsage) {
         let data = try await perform(makeRequest("responses", method: "POST", body: body, timeout: 600), log: log)
         guard let response = try? JSONDecoder().decode(ResponseBody.self, from: data) else {
             throw APIError.invalidResponse("No se pudo leer la respuesta de /responses.")
@@ -230,7 +265,63 @@ struct OpenAIClient: Sendable {
         if items.isEmpty, let reason = response.incomplete_details?.reason {
             throw APIError.invalidResponse("La respuesta quedó incompleta (\(reason)).")
         }
-        return items
+        return (items, ReportedUsage(parsing: data))
+    }
+
+    // MARK: Spending
+
+    /// The organization's daily costs from OpenAI's Costs API, one entry per day and line item
+    /// (e.g. "gpt-5-2025-08-07, input"). Days are UTC. Only an Admin key can read it.
+    func organizationCosts(days: Int, now: Date = Date()) async throws -> [DailyCost] {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        let today = utc.startOfDay(for: now)
+        let start = utc.date(byAdding: .day, value: -(days - 1), to: today) ?? today
+
+        var costs: [DailyCost] = []
+        var page: String?
+        for _ in 0..<20 {
+            var query = [
+                URLQueryItem(name: "start_time", value: String(Int(start.timeIntervalSince1970))),
+                URLQueryItem(name: "bucket_width", value: "1d"),
+                URLQueryItem(name: "group_by", value: "line_item"),
+                URLQueryItem(name: "limit", value: String(days)),
+            ]
+            if let page { query.append(URLQueryItem(name: "page", value: page)) }
+            let data = try await perform(makeRequest("organization/costs", query: query, timeout: 30))
+            guard let response = try? JSONDecoder().decode(CostsPage.self, from: data) else {
+                throw APIError.invalidResponse("No se pudo leer la respuesta de /organization/costs.")
+            }
+            for bucket in response.data ?? [] {
+                let day = Date(timeIntervalSince1970: TimeInterval(bucket.start_time))
+                for result in bucket.results ?? [] {
+                    guard let amount = result.amount?.value else { continue }
+                    costs.append(DailyCost(
+                        day: day, amount: amount, currency: result.amount?.currency ?? "usd", lineItem: result.line_item))
+                }
+            }
+            guard response.has_more == true, let next = response.next_page else { break }
+            page = next
+        }
+        return costs
+    }
+
+    /// What OpenRouter reports for the key in use, plus the account balance when the key may read it.
+    func openRouterSpend() async throws -> OpenRouterSpend {
+        // OpenRouter documents /credits for management keys only, so a regular key may be refused.
+        async let creditsData = try? perform(makeRequest("credits", timeout: 20))
+        let data = try await perform(makeRequest("key", timeout: 20))
+        guard let key = try? JSONDecoder().decode(DataEnvelope<OpenRouterKeyBody>.self, from: data).data else {
+            throw APIError.invalidResponse("No se pudo leer la respuesta de /key.")
+        }
+        var spend = OpenRouterSpend(
+            today: key.usage_daily, thisWeek: key.usage_weekly, thisMonth: key.usage_monthly, total: key.usage,
+            limit: key.limit, limitRemaining: key.limit_remaining)
+        if let creditsData = await creditsData,
+           let credits = try? JSONDecoder().decode(DataEnvelope<CreditsBody>.self, from: creditsData).data {
+            spend.balance = credits.total_credits - credits.total_usage
+        }
+        return spend
     }
 
     /// Resolves a `data:` URL or downloads an http(s) image URL.
@@ -270,6 +361,42 @@ private struct ResponseBody: Decodable {
     let output: [Item]?
     let error: ErrorBody?
     let incomplete_details: IncompleteDetails?
+}
+
+private struct CostsPage: Decodable {
+    struct Bucket: Decodable {
+        struct Result: Decodable {
+            struct Amount: Decodable {
+                let value: Double?
+                let currency: String?
+            }
+            let amount: Amount?
+            let line_item: String?
+        }
+        let start_time: Int
+        let results: [Result]?
+    }
+    let data: [Bucket]?
+    let has_more: Bool?
+    let next_page: String?
+}
+
+private struct DataEnvelope<Body: Decodable>: Decodable {
+    let data: Body
+}
+
+private struct OpenRouterKeyBody: Decodable {
+    let usage: Double?
+    let usage_daily: Double?
+    let usage_weekly: Double?
+    let usage_monthly: Double?
+    let limit: Double?
+    let limit_remaining: Double?
+}
+
+private struct CreditsBody: Decodable {
+    let total_credits: Double
+    let total_usage: Double
 }
 
 private struct ChatChunk: Decodable {

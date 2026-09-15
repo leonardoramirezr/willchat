@@ -14,6 +14,16 @@ final class AppSettings {
         static let availableModels = "availableModels"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
         static let apiKeyAccount = "apiKey"
+        static let openAIAdminKeyAccount = "openAIAdminKey"
+    }
+
+    /// Providers whose spending WillChat can read through their API.
+    enum BillingProvider {
+        /// Costs API; needs an organization Admin key.
+        case openAI
+        /// `/key` and `/credits`; the regular API key works.
+        case openRouter
+        case other
     }
 
     static let defaultBaseURL = "https://api.openai.com/v1"
@@ -23,6 +33,8 @@ final class AppSettings {
 
     var baseURL: String { didSet { defaults.set(baseURL, forKey: Keys.baseURL) } }
     private(set) var apiKey: String
+    /// Only used to read the organization's costs; OpenAI refuses regular keys there.
+    private(set) var openAIAdminKey: String
     var chatModel: String { didSet { defaults.set(chatModel, forKey: Keys.chatModel) } }
     var imageModel: String { didSet { defaults.set(imageModel, forKey: Keys.imageModel) } }
     var imageGenerationEnabled: Bool { didSet { defaults.set(imageGenerationEnabled, forKey: Keys.imageGenerationEnabled) } }
@@ -34,6 +46,7 @@ final class AppSettings {
     init() {
         baseURL = defaults.string(forKey: Keys.baseURL) ?? Self.defaultBaseURL
         apiKey = Keychain.read(account: Keys.apiKeyAccount) ?? ""
+        openAIAdminKey = Keychain.read(account: Keys.openAIAdminKeyAccount) ?? ""
         chatModel = defaults.string(forKey: Keys.chatModel) ?? ""
         imageModel = defaults.string(forKey: Keys.imageModel) ?? Self.defaultImageModel
         imageGenerationEnabled = defaults.object(forKey: Keys.imageGenerationEnabled) as? Bool ?? true
@@ -47,15 +60,38 @@ final class AppSettings {
         let key = key.trimmed
         guard key != apiKey else { return }
         apiKey = key
-        if key.isEmpty {
-            Keychain.delete(account: Keys.apiKeyAccount)
+        Self.storeSecret(key, account: Keys.apiKeyAccount)
+    }
+
+    func setOpenAIAdminKey(_ key: String) {
+        let key = key.trimmed
+        guard key != openAIAdminKey else { return }
+        openAIAdminKey = key
+        Self.storeSecret(key, account: Keys.openAIAdminKeyAccount)
+    }
+
+    private static func storeSecret(_ value: String, account: String) {
+        if value.isEmpty {
+            Keychain.delete(account: account)
         } else {
-            Keychain.save(key, account: Keys.apiKeyAccount)
+            Keychain.save(value, account: account)
         }
     }
 
     func makeClient() throws -> OpenAIClient {
         try Self.makeClient(baseURL: baseURL, apiKey: apiKey)
+    }
+
+    /// A client for OpenAI's organization endpoints, authenticated with the Admin key.
+    func makeAdminClient() throws -> OpenAIClient {
+        try Self.makeClient(baseURL: baseURL, apiKey: openAIAdminKey)
+    }
+
+    var billingProvider: BillingProvider {
+        guard let host = Self.normalizedBaseURL(baseURL)?.host()?.lowercased() else { return .other }
+        if host == "api.openai.com" { return .openAI }
+        if host == "openrouter.ai" || host.hasSuffix(".openrouter.ai") { return .openRouter }
+        return .other
     }
 
     static func makeClient(baseURL: String, apiKey: String) throws -> OpenAIClient {
